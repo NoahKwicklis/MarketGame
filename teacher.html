@@ -230,7 +230,10 @@
     });
     WX.gameRef(room, "trades").on("value", s => {
       trades = [];
-      s.forEach(ch => trades.push(Object.assign({ id: ch.key }, ch.val())));
+      // NOTE: snapshot.forEach cancels iteration if the callback returns a
+      // truthy value, and Array.push returns the (truthy) new length — so the
+      // callback must be a block statement, not a bare expression.
+      s.forEach(ch => { trades.push(Object.assign({ id: ch.key }, ch.val())); });
       trades.sort((x, y) => x.t - y.t);
       renderKPIs(); renderChart(); renderTimeChart();
     });

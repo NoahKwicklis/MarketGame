@@ -155,6 +155,24 @@
   const savedName = sessionStorage.getItem("wx-name");
   if (savedName) $("join-name").value = savedName;
 
+  // If we were ejected (room wiped/reset, or removed by the instructor),
+  // the reason was stashed just before the page reloaded — show it.
+  try {
+    const kickMsg = sessionStorage.getItem("wx-kick-msg");
+    if (kickMsg) { sessionStorage.removeItem("wx-kick-msg"); $("join-err").textContent = kickMsg; }
+  } catch (e) {}
+
+  // Leaving = reloading back to the join screen. A reload (rather than
+  // hand-unwinding listeners, charts, and timers) guarantees no stale
+  // Firebase subscriptions survive; ?room= keeps the code pre-filled.
+  let leaving = false;
+  function leaveRoom(msg) {
+    if (leaving) return;
+    leaving = true;
+    try { sessionStorage.setItem("wx-kick-msg", msg); } catch (e) {}
+    location.replace(location.pathname + (room ? "?room=" + encodeURIComponent(room) : ""));
+  }
+
   $("join-btn").addEventListener("click", join);
   $("join-name").addEventListener("keydown", e => { if (e.key === "Enter") join(); });
 
@@ -187,11 +205,29 @@
   }
 
   // ---------- live subscriptions ----------
+  let gameEpoch = null;                 // createdAt of the game we joined
+  let wasInGame = false;                // ever seen our own player record?
   function subscribe() {
-    WX.gameRef(room, "meta").on("value", s => { meta = s.val(); renderMeta(); });
+    WX.gameRef(room, "meta").on("value", s => {
+      const m = s.val();
+      // The room vanished, or was wiped & recreated (new createdAt):
+      // either way the game we joined no longer exists.
+      if (!m) { leaveRoom("Your instructor closed room " + room + "."); return; }
+      if (gameEpoch === null) gameEpoch = m.createdAt || 0;
+      else if ((m.createdAt || 0) !== gameEpoch) {
+        leaveRoom("Your instructor reset room " + room + ". Enter the code to rejoin."); return;
+      }
+      meta = m; renderMeta();
+    });
     WX.gameRef(room, "market").on("value", s => {
       market = s.val();
       me = market && market.players ? market.players[myName] : null;
+      if (me) wasInGame = true;
+      else if (wasInGame && market) {
+        // The market still exists but our player record is gone — the
+        // instructor removed us, or the room was rebuilt without us.
+        leaveRoom("You\u2019re no longer in room " + room + ". Enter the code to rejoin."); return;
+      }
       renderPosition(); renderBook(); renderMeta();
     });
     WX.gameRef(room, "trades").on("value", s => {

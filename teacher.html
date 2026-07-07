@@ -11,8 +11,22 @@
 </head>
 <body>
 
+<!-- ======================= LOCK SCREEN ======================= -->
+<div id="lock-screen" class="join-wrap">
+  <div class="join-hero">
+    <h1>Widget <span>Exchange</span></h1>
+    <p>Instructor console. Enter the passphrase to continue.</p>
+  </div>
+  <div class="card">
+    <label for="lock-pass">Passphrase</label>
+    <input id="lock-pass" type="password" autocomplete="current-password" autofocus>
+    <button id="lock-btn" class="btn">Unlock</button>
+    <div id="lock-err" class="err" role="alert"></div>
+  </div>
+</div>
+
 <!-- ======================= SETUP SCREEN ======================= -->
-<div id="setup-screen" class="join-wrap">
+<div id="setup-screen" class="join-wrap hidden">
   <div class="join-hero">
     <h1>Widget <span>Exchange</span></h1>
     <p>Instructor console. Create a room, announce the code, run the market.</p>
@@ -100,6 +114,14 @@
           <button id="btn-reset" class="btn ghost" style="border-color:var(--ask);color:var(--ask)">
             Reset game (clears trades & scores, keeps players)
           </button>
+          <button id="btn-nuke" class="btn" style="background:var(--ask)">
+            Hard clear — wipe room &amp; kick everyone out
+          </button>
+          <p class="muted" style="font-size:0.8rem;margin:8px 0 0">
+            Hard clear deletes every trade, score, and player, ejects all
+            connected students to the join screen, and restarts a fresh
+            simulation under the same room code.
+          </p>
         </div>
       </div>
 
@@ -187,6 +209,52 @@
 (function () {
   "use strict";
   const $ = id => document.getElementById(id);
+
+  // ---------- passphrase gate ----------
+  // SHA-256 hash of the instructor passphrase. The DEFAULT passphrase is
+  //   open-outcry
+  // — change it! To set your own: unlock the page, open the browser console
+  // (F12), run  WX_HASH("your new passphrase")  and paste the printed hash
+  // over the value below, then re-upload this file.
+  //
+  // Honest limits: this deters students who stumble onto the URL; it is NOT
+  // real security. The page source is public and the database itself is
+  // writable by anyone with the room code (see SETUP.md, step 2).
+  const TEACH_PASS_SHA256 =
+    "d5bfbabea02db8fc22a7e6f7743c4702b0311008efeb6458557e6f0b7f4a8a94";
+
+  function sha256Hex(str) {
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str))
+      .then(buf => [...new Uint8Array(buf)]
+        .map(b => b.toString(16).padStart(2, "0")).join(""));
+  }
+  window.WX_HASH = s => sha256Hex(String(s)).then(h => { console.log(h); return h; });
+
+  function unlock() {
+    const errEl = $("lock-err"); errEl.textContent = "";
+    if (!window.crypto || !crypto.subtle) {
+      errEl.textContent = "This browser context can\u2019t hash the passphrase \u2014 open the page over https:// (or as a local file)."; return;
+    }
+    sha256Hex($("lock-pass").value).then(h => {
+      if (h === TEACH_PASS_SHA256) {
+        try { sessionStorage.setItem("wx-teach-ok", h); } catch (e) {}
+        $("lock-screen").classList.add("hidden");
+        $("setup-screen").classList.remove("hidden");
+        $("setup-room").focus();
+      } else {
+        errEl.textContent = "Wrong passphrase.";
+        $("lock-pass").select();
+      }
+    });
+  }
+  $("lock-btn").addEventListener("click", unlock);
+  $("lock-pass").addEventListener("keydown", e => { if (e.key === "Enter") unlock(); });
+  try {
+    if (sessionStorage.getItem("wx-teach-ok") === TEACH_PASS_SHA256) {
+      $("lock-screen").classList.add("hidden");
+      $("setup-screen").classList.remove("hidden");
+    }
+  } catch (e) {}
 
   // Defaults for a clean classroom market: p* = $7, q* = 5 per trader.
   const DEFAULTS = { a: 12, b: 1, c: 2, d: 1, minutes: 5, rounds: 3 };
@@ -815,6 +883,42 @@
       }),
       WX.gameRef(room, "meta").update({ phase: "lobby", round: 0, roundEndsAt: 0, pauseRemainingMs: 0 })
     ]).then(() => toast("Game reset. Fresh market."));
+  });
+
+  // ---------- hard clear (wipe room, kick everyone) ----------
+  // Deletes the entire /games/{room} node, then recreates a fresh lobby.
+  // The new game gets a new createdAt; student pages treat a changed (or
+  // vanished) createdAt as "this room no longer exists" and eject to the
+  // join screen — including phones that were asleep during the wipe.
+  function paramsForFreshGame() {
+    const a = parseFloat($("p-a").value), b = parseFloat($("p-b").value);
+    const c = parseFloat($("p-c").value), d = parseFloat($("p-d").value);
+    const m = parseFloat($("p-m").value), t = parseInt($("p-t").value, 10);
+    const ok = [a, b, c, d, m].every(x => isFinite(x) && x >= 0) &&
+      b > 0 && d > 0 && a > c && t >= 1;
+    const v = ok ? { a, b, c, d, minutes: m, rounds: t } : DEFAULTS;
+    // Keep the inputs consistent with what the fresh game will actually use.
+    $("p-a").value = v.a; $("p-b").value = v.b; $("p-c").value = v.c;
+    $("p-d").value = v.d; $("p-m").value = v.minutes; $("p-t").value = v.rounds;
+    return v;
+  }
+  $("btn-nuke").addEventListener("click", () => {
+    if (!confirm("HARD CLEAR of room " + room + ":\n\n\u2022 every connected student is kicked to the join screen\n\u2022 all trades, scores, players, and orders are permanently deleted\n\u2022 a fresh simulation starts under the same room code\n\nDownload your CSVs first. Continue?")) return;
+    if (!confirm("Really wipe room " + room + "? This cannot be undone.")) return;
+    const v = paramsForFreshGame();
+    WX.gameRef(room).remove().then(() => WX.gameRef(room).set({
+      meta: {
+        phase: "lobby", round: 0, totalRounds: v.rounds,
+        roundSeconds: Math.round(v.minutes * 60),
+        roundEndsAt: 0, pauseRemainingMs: 0, createdAt: WX.serverNow()
+      },
+      market: {
+        open: false,
+        params: { a: WX.toCents(v.a), b: WX.toCents(v.b), c: WX.toCents(v.c), d: WX.toCents(v.d) },
+        players: {}, orders: {}
+      }
+    })).then(() => toast("Room wiped \u2014 fresh simulation ready."))
+      .catch(e => toast("Hard clear failed: " + (e.message || e)));
   });
 
   // ---------- toast ----------

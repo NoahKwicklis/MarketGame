@@ -100,8 +100,22 @@ window.FIREBASE_CONFIG = {
    - Students: `https://YOURNAME.github.io/widget-exchange/`
    - You: `https://YOURNAME.github.io/widget-exchange/teacher.html`
 
-The teacher page has no password — it's protected only by the URL not being
-announced. Don't link to it from the student page or your syllabus.
+The teacher page asks for a passphrase before showing the console. The
+default is **`open-outcry`** — change it before class:
+
+1. Open `teacher.html` in your browser and unlock it.
+2. Open the browser console (F12) and run `WX_HASH("your new passphrase")`.
+3. Copy the printed hash over the `TEACH_PASS_SHA256` value near the top of
+   the script in `teacher.html`, and re-upload the file.
+
+The passphrase is remembered per browser tab (session), so you won't retype
+it after every refresh.
+
+> **Honest caveat:** on a static site this gate deters students who stumble
+> onto the URL; it is not real security. The page source is public and the
+> database rules (step 2) let anyone with the room code read and write game
+> data. So still don't link `teacher.html` from the student page or your
+> syllabus.
 
 ## Step 5 — Dry run (5 minutes, before class)
 
@@ -140,6 +154,13 @@ announced. Don't link to it from the student page or your syllabus.
 6. **After class:** download the **trades CSV** (timestamp, round, buyer,
    seller, price, each side's MU/MC and surplus) and the **standings CSV**,
    then project the convergence chart for the debrief.
+7. **Two ways to start over:** **Reset game** clears trades, scores, and
+   orders but keeps everyone joined (good between activities in the same
+   class). **Hard clear** deletes the entire room — every student is
+   ejected back to the join screen (with the room code pre-filled), all
+   data is wiped, and a fresh simulation opens under the same code (good
+   between class sections, or if the room gets into a weird state).
+   Download your CSVs before either one.
 
 ### Suggested debrief plot
 The trades CSV opens directly in Excel/Sheets. Plot `price` against trade

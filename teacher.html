@@ -106,13 +106,13 @@
       <!-- Chart + tables -->
       <div>
         <div class="card">
-          <h2>Convergence — average price of the k-th trade (instructor eyes only)</h2>
+          <h2>Average price of the k-th trade</h2>
           <div class="chart-box"><canvas id="chart"></canvas></div>
           <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
             Dot k averages the price of every trader&#8217;s k-th transaction that
             round (each trade counts once for the buyer&#8217;s sequence and once for
             the seller&#8217;s). Dashed line = theoretical equilibrium p* from current
-            parameters. Don&#8217;t project this view until the debrief.
+            parameters.
           </p>
         </div>
 
@@ -121,8 +121,6 @@
           <div class="chart-box"><canvas id="chart-time"></canvas></div>
           <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
             Each dot is a trade plotted at the moment it happened within its round.
-            The vertical marker sweeps with the clock during a live round, so you
-            can watch bursts and lulls as they occur.
           </p>
         </div>
 

@@ -311,6 +311,14 @@
     $("cancel-btn").classList.toggle("hidden", !mine);
     if (mine) $("cancel-btn").textContent = "Cancel my " + (mine.side === "bid" ? "bid" : "ask") +
       " at " + WX.fmt(mine.price);
+    // If the "your order is live" note is showing but the order is gone
+    // (cancelled, or filled by someone else), clear it.
+    const errEl = $("order-err");
+    if (!mine && errEl.dataset.live === "1") {
+      errEl.textContent = "";
+      errEl.classList.remove("ok");
+      delete errEl.dataset.live;
+    }
   }
 
   function fillBook(bodyId, emptyId, rows) {
@@ -545,6 +553,7 @@
 
   function submit() {
     const errEl = $("order-err"); errEl.textContent = ""; errEl.classList.remove("ok");
+    delete errEl.dataset.live;
     if (!marketIsOpen()) { errEl.textContent = "The market is closed right now."; return; }
     const raw = $("price-in").value;
     const priceCents = WX.toCents(raw);
@@ -557,6 +566,7 @@
     WX.submitOrder(room, myName, side, priceCents, meta ? meta.round : null).then(res => {
       if (res.status === "rested") {
         errEl.classList.add("ok");
+        errEl.dataset.live = "1";
         errEl.textContent = "Your " + side + " is live at " + WX.fmt(priceCents) + ".";
         $("price-in").value = "";
       } else if (res.status === "traded") {
@@ -571,6 +581,10 @@
   }
 
   $("cancel-btn").addEventListener("click", () => {
+    const errEl = $("order-err");
+    errEl.textContent = "";
+    errEl.classList.remove("ok");
+    delete errEl.dataset.live;
     WX.cancelOrder(room, myName, meta ? meta.round : 0).then(() => toast("Order cancelled."));
   });
 
@@ -588,19 +602,27 @@
   // Browsers only allow audio after a user gesture; warm up on the first tap.
   document.addEventListener("pointerdown", () => { try { ac(); } catch (e) {} }, { once: true });
 
-  function clickSound() {                       // short tactile tick
+  function clickSound() {                       // mouse-click: short noise snap
     if (!soundOn) return;
     try {
       const ctx = ac(); if (!ctx) return;
       const t = ctx.currentTime;
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = "triangle";
-      o.frequency.setValueAtTime(1700, t);
-      o.frequency.exponentialRampToValueAtTime(600, t + 0.03);
-      g.gain.setValueAtTime(0.15, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
-      o.connect(g); g.connect(ctx.destination);
-      o.start(t); o.stop(t + 0.06);
+      // ~12ms of white noise through a bandpass = the "snap" of a mouse button
+      const len = Math.floor(ctx.sampleRate * 0.012);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / len);   // fast built-in decay
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass"; bp.frequency.value = 3200; bp.Q.value = 0.9;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.5, t);
+      g.gain.exponentialRampToValueAtTime(0.01, t + 0.03);
+      src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+      src.start(t);
     } catch (e) {}
   }
 

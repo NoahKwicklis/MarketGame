@@ -602,27 +602,36 @@
   // Browsers only allow audio after a user gesture; warm up on the first tap.
   document.addEventListener("pointerdown", () => { try { ac(); } catch (e) {} }, { once: true });
 
-  function clickSound() {                       // mouse-click: short noise snap
+  function clickSound() {                       // mechanical-keyboard "thock"
     if (!soundOn) return;
     try {
       const ctx = ac(); if (!ctx) return;
       const t = ctx.currentTime;
-      // ~12ms of white noise through a bandpass = the "snap" of a mouse button
-      const len = Math.floor(ctx.sampleRate * 0.012);
+      // Body: ~25ms of noise through a soft low-mid bandpass (rounded, not sharp)
+      const len = Math.floor(ctx.sampleRate * 0.025);
       const buf = ctx.createBuffer(1, len, ctx.sampleRate);
       const data = buf.getChannelData(0);
       for (let i = 0; i < len; i++) {
-        data[i] = (Math.random() * 2 - 1) * (1 - i / len);   // fast built-in decay
+        data[i] = (Math.random() * 2 - 1) * (1 - i / len);
       }
       const src = ctx.createBufferSource();
       src.buffer = buf;
       const bp = ctx.createBiquadFilter();
-      bp.type = "bandpass"; bp.frequency.value = 3200; bp.Q.value = 0.9;
+      bp.type = "bandpass"; bp.frequency.value = 1400; bp.Q.value = 0.7;
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0.5, t);
-      g.gain.exponentialRampToValueAtTime(0.01, t + 0.03);
+      g.gain.setValueAtTime(0.35, t);
+      g.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
       src.connect(bp); bp.connect(g); g.connect(ctx.destination);
       src.start(t);
+      // Thump: a quiet, fast-decaying low sine — the key bottoming out
+      const o = ctx.createOscillator(), og = ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(190, t);
+      o.frequency.exponentialRampToValueAtTime(120, t + 0.05);
+      og.gain.setValueAtTime(0.12, t);
+      og.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+      o.connect(og); og.connect(ctx.destination);
+      o.start(t); o.stop(t + 0.07);
     } catch (e) {}
   }
 

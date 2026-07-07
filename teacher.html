@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Widget Exchange — Instructor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ======================= SETUP SCREEN ======================= -->
+<div id="setup-screen" class="join-wrap">
+  <div class="join-hero">
+    <h1>Widget <span>Exchange</span></h1>
+    <p>Instructor console. Create a room, announce the code, run the market.</p>
+  </div>
+  <div class="card">
+    <label for="setup-room">Room code (share this with the class)</label>
+    <input id="setup-room" type="text" autocomplete="off" autocapitalize="characters"
+           maxlength="8" placeholder="e.g. MKT25">
+    <div class="btn-row" style="margin-top:12px">
+      <button id="setup-open" class="btn" style="flex:1">Open room</button>
+      <button id="setup-rand" class="btn ghost small" style="align-self:stretch">Random code</button>
+    </div>
+    <div id="setup-err" class="err" role="alert"></div>
+    <p class="muted" style="font-size:0.84rem">
+      Opening an existing code reconnects to that game; a new code creates a fresh one.
+      Students join at <span class="mono">index.html</span> with the same code.
+    </p>
+  </div>
+</div>
+
+<!-- ======================= DASHBOARD ======================= -->
+<div id="dash" class="hidden">
+  <div class="topbar">
+    <div class="wordmark">Widget<span>X</span> · Instructor</div>
+    <div class="slot"><span class="lbl">Room</span><span class="val" id="d-room">—</span></div>
+    <div class="slot"><span class="lbl">Round</span><span class="val" id="d-round">—</span></div>
+    <div class="slot"><span class="lbl">Phase</span><span class="val" id="d-phase">—</span></div>
+    <div class="slot clock"><span class="lbl">Time left</span><span class="val" id="d-clock">—:—</span></div>
+  </div>
+
+  <div class="wrap">
+    <div class="kpis card" style="display:grid">
+      <div class="kpi"><div class="k">Players</div><div class="v" id="k-players">0</div></div>
+      <div class="kpi"><div class="k">Buyers / Sellers</div><div class="v" id="k-split">0 / 0</div></div>
+      <div class="kpi"><div class="k">Trades (round)</div><div class="v" id="k-trades">0</div></div>
+      <div class="kpi"><div class="k">Last price</div><div class="v" id="k-last">—</div></div>
+      <div class="kpi"><div class="k">Avg price (round)</div><div class="v" id="k-avg">—</div></div>
+      <div class="kpi"><div class="k">Theoretical p*</div><div class="v" id="k-eqp">—</div></div>
+      <div class="kpi"><div class="k">q* per trader</div><div class="v" id="k-eqq">—</div></div>
+    </div>
+
+    <div class="grid-2">
+      <!-- Controls -->
+      <div>
+        <div class="card">
+          <h2>Round controls</h2>
+          <div class="btn-row">
+            <button id="btn-start" class="btn small" style="flex:1">Start round 1</button>
+            <button id="btn-pause" class="btn ghost small" style="flex:1">Pause</button>
+            <button id="btn-end" class="btn ghost small" style="flex:1">End round</button>
+          </div>
+          <div id="ctl-err" class="err" role="alert"></div>
+        </div>
+
+        <div class="card">
+          <h2>Market parameters</h2>
+          <p class="muted" style="font-size:0.84rem;margin:0 0 4px">
+            Buyers: MU = a − b·Q &nbsp;·&nbsp; Sellers: MC = c + d·Q.
+            Applying mid-round is a live shock — new trades use the new schedule instantly.
+          </p>
+          <div class="param-grid">
+            <div><label for="p-a">a — demand intercept ($)</label>
+              <input id="p-a" type="number" step="0.01" min="0"></div>
+            <div><label for="p-b">b — demand slope ($/unit)</label>
+              <input id="p-b" type="number" step="0.01" min="0.01"></div>
+            <div><label for="p-c">c — cost intercept ($)</label>
+              <input id="p-c" type="number" step="0.01" min="0"></div>
+            <div><label for="p-d">d — cost slope ($/unit)</label>
+              <input id="p-d" type="number" step="0.01" min="0.01"></div>
+            <div><label for="p-m">M — minutes per round</label>
+              <input id="p-m" type="number" step="0.5" min="0.5"></div>
+            <div><label for="p-t">T — number of rounds</label>
+              <input id="p-t" type="number" step="1" min="1"></div>
+          </div>
+          <button id="btn-params" class="btn">Apply parameters</button>
+          <div id="param-note" class="err ok" role="status"></div>
+        </div>
+
+        <div class="card">
+          <h2>Data & housekeeping</h2>
+          <div class="btn-row">
+            <button id="btn-csv-trades" class="btn ghost small" style="flex:1">Download trades CSV</button>
+            <button id="btn-csv-standings" class="btn ghost small" style="flex:1">Download standings CSV</button>
+          </div>
+          <button id="btn-reset" class="btn ghost" style="border-color:var(--ask);color:var(--ask)">
+            Reset game (clears trades & scores, keeps players)
+          </button>
+        </div>
+      </div>
+
+      <!-- Chart + tables -->
+      <div>
+        <div class="card">
+          <h2>Transaction prices — convergence (instructor eyes only)</h2>
+          <div class="chart-box"><canvas id="chart"></canvas></div>
+          <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
+            Dashed line = theoretical equilibrium p* from current parameters.
+            Don’t project this view until the debrief.
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Standings</h2>
+          <table aria-label="Standings"><thead>
+            <tr><th>#</th><th>Trader</th><th>Role</th><th class="num">Q (rd)</th>
+                <th class="num">Score</th><th></th></tr>
+          </thead><tbody id="stand-body"></tbody></table>
+          <div id="stand-empty" class="empty-note">No one has joined yet. Share the room code!</div>
+          <p class="muted" style="font-size:0.8rem;margin-top:6px">
+            Role switching and removal are available while the market is closed.
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Live order book</h2>
+          <div class="book-cols">
+            <div>
+              <div class="book-head bid-c">Bids</div>
+              <table><thead><tr><th>Trader</th><th class="num">Price</th></tr></thead>
+                <tbody id="d-bids"></tbody></table>
+            </div>
+            <div>
+              <div class="book-head ask-c">Asks</div>
+              <table><thead><tr><th>Trader</th><th class="num">Price</th></tr></thead>
+                <tbody id="d-asks"></tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <footer class="credit">Widget Exchange · instructor console</footer>
+  </div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="shared.js"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+
+  // Defaults for a clean classroom market: p* = $7, q* = 5 per trader.
+  const DEFAULTS = { a: 12, b: 1, c: 2, d: 1, minutes: 5, rounds: 3 };
+
+  let room = null, meta = null, market = null, trades = [];
+  let chart = null, clockTimer = null, autoEndGuard = false;
+
+  // ---------- setup ----------
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("room")) $("setup-room").value = WX.cleanRoom(qs.get("room"));
+  $("setup-rand").addEventListener("click", () => { $("setup-room").value = WX.randomRoom(); });
+  $("setup-open").addEventListener("click", openRoom);
+
+  function openRoom() {
+    const errEl = $("setup-err"); errEl.textContent = "";
+    room = WX.cleanRoom($("setup-room").value);
+    if (!WX.ROOM_RE.test(room)) { errEl.textContent = "Room codes are 4–8 letters and numbers."; return; }
+    let db;
+    try { db = WX.initFirebase(); }
+    catch (e) { errEl.textContent = e.message; return; }
+
+    $("setup-open").disabled = true;
+    WX.gameRef(room, "meta").once("value").then(snap => {
+      if (snap.exists()) return;               // reconnect to existing game
+      const params = {
+        a: WX.toCents(DEFAULTS.a), b: WX.toCents(DEFAULTS.b),
+        c: WX.toCents(DEFAULTS.c), d: WX.toCents(DEFAULTS.d)
+      };
+      return WX.gameRef(room).set({
+        meta: {
+          phase: "lobby", round: 0, totalRounds: DEFAULTS.rounds,
+          roundSeconds: Math.round(DEFAULTS.minutes * 60),
+          roundEndsAt: 0, pauseRemainingMs: 0, createdAt: WX.serverNow()
+        },
+        market: { open: false, params: params, players: {}, orders: {} }
+      });
+    }).then(() => {
+      $("setup-screen").classList.add("hidden");
+      $("dash").classList.remove("hidden");
+      $("d-room").textContent = room;
+      subscribe();
+    }).catch(e => { errEl.textContent = e.message || "Could not open the room."; })
+      .finally(() => { $("setup-open").disabled = false; });
+  }
+
+  // ---------- subscriptions ----------
+  function subscribe() {
+    WX.gameRef(room, "meta").on("value", s => {
+      meta = s.val() || {};
+      syncParamInputsOnce();
+      renderMeta();
+    });
+    WX.gameRef(room, "market").on("value", s => {
+      market = s.val() || {};
+      syncParamInputsOnce();
+      renderKPIs(); renderStandings(); renderBook(); renderChart();
+    });
+    WX.gameRef(room, "trades").on("value", s => {
+      trades = [];
+      s.forEach(ch => trades.push(Object.assign({ id: ch.key }, ch.val())));
+      trades.sort((x, y) => x.t - y.t);
+      renderKPIs(); renderChart();
+    });
+    if (clockTimer) clearInterval(clockTimer);
+    clockTimer = setInterval(tick, 250);
+  }
+
+  let paramsSynced = false;
+  function syncParamInputsOnce() {
+    if (paramsSynced || !meta || !market || !market.params) return;
+    paramsSynced = true;
+    $("p-a").value = (market.params.a / 100);
+    $("p-b").value = (market.params.b / 100);
+    $("p-c").value = (market.params.c / 100);
+    $("p-d").value = (market.params.d / 100);
+    $("p-m").value = (meta.roundSeconds || 300) / 60;
+    $("p-t").value = meta.totalRounds || 3;
+  }
+
+  // ---------- clock & auto round end ----------
+  function tick() {
+    const el = $("d-clock");
+    if (!meta || meta.phase !== "running" || !meta.roundEndsAt) {
+      el.textContent = meta && meta.phase === "paused" ? "PAUSED" : "—:—";
+      el.className = "val"; return;
+    }
+    const ms = meta.roundEndsAt - WX.serverNow();
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    el.className = "val" + (s <= 10 ? " crit" : s <= 30 ? " warn" : "");
+    if (ms <= 0 && !autoEndGuard) { autoEndGuard = true; endRound().finally(() => { autoEndGuard = false; }); }
+  }
+
+  // ---------- round controls ----------
+  $("btn-start").addEventListener("click", startRound);
+  $("btn-pause").addEventListener("click", pauseOrResume);
+  $("btn-end").addEventListener("click", () => endRound(true));
+
+  function startRound() {
+    const errEl = $("ctl-err"); errEl.textContent = "";
+    if (!meta) return;
+    if (meta.phase === "running") { errEl.textContent = "A round is already running."; return; }
+    const next = (meta.round || 0) + 1;
+    if (next > (meta.totalRounds || 1)) {
+      errEl.textContent = "All " + meta.totalRounds + " rounds are done. Raise T or reset the game."; return;
+    }
+    WX.gameRef(room, "market").transaction(m => {
+      if (!m) return m;
+      m.orders = {};
+      if (m.players) for (const p of Object.values(m.players)) p.q = 0;
+      m.open = true;
+      return m;
+    }).then(() => WX.gameRef(room, "meta").update({
+      phase: "running", round: next,
+      roundEndsAt: WX.serverNow() + (meta.roundSeconds || 300) * 1000,
+      pauseRemainingMs: 0
+    })).then(() => toast("Round " + next + " is live."));
+  }
+
+  function pauseOrResume() {
+    if (!meta) return;
+    if (meta.phase === "running") {
+      const remaining = Math.max(0, meta.roundEndsAt - WX.serverNow());
+      WX.gameRef(room, "market/open").set(false);
+      WX.gameRef(room, "meta").update({ phase: "paused", pauseRemainingMs: remaining });
+    } else if (meta.phase === "paused") {
+      WX.gameRef(room, "market/open").set(true);
+      WX.gameRef(room, "meta").update({
+        phase: "running",
+        roundEndsAt: WX.serverNow() + (meta.pauseRemainingMs || 0),
+        pauseRemainingMs: 0
+      });
+    }
+  }
+
+  function endRound(manual) {
+    if (!meta || (meta.phase !== "running" && meta.phase !== "paused")) return Promise.resolve();
+    const done = (meta.round || 0) >= (meta.totalRounds || 1);
+    return WX.gameRef(room, "market/open").set(false)
+      .then(() => WX.gameRef(room, "meta").update({
+        phase: done ? "ended" : "between", roundEndsAt: 0, pauseRemainingMs: 0
+      }))
+      .then(() => toast(done ? "Final round complete — game over." : "Round " + meta.round + " closed."));
+  }
+
+  // ---------- parameters ----------
+  $("btn-params").addEventListener("click", () => {
+    const note = $("param-note"); note.textContent = "";
+    const a = parseFloat($("p-a").value), b = parseFloat($("p-b").value);
+    const c = parseFloat($("p-c").value), d = parseFloat($("p-d").value);
+    const m = parseFloat($("p-m").value), t = parseInt($("p-t").value, 10);
+    if ([a, b, c, d, m].some(x => !isFinite(x) || x < 0) || b <= 0 || d <= 0 || !t || t < 1) {
+      note.classList.remove("ok"); note.textContent = "Check the numbers: b, d, M, T must be positive."; return;
+    }
+    if (a <= c) {
+      note.classList.remove("ok"); note.textContent = "a must exceed c or no trades are profitable."; return;
+    }
+    const params = { a: WX.toCents(a), b: WX.toCents(b), c: WX.toCents(c), d: WX.toCents(d) };
+    Promise.all([
+      WX.gameRef(room, "market/params").set(params),
+      WX.gameRef(room, "meta").update({ roundSeconds: Math.round(m * 60), totalRounds: t })
+    ]).then(() => {
+      note.classList.add("ok");
+      const eq = WX.equilibrium(params);
+      note.textContent = "Applied. New p* = " + WX.fmt(Math.round(eq.price)) +
+        ", q* \u2248 " + eq.qtyPerPair.toFixed(1) + " per trader.";
+    });
+  });
+
+  // ---------- standings ----------
+  function renderStandings() {
+    const tb = $("stand-body"); tb.innerHTML = "";
+    const players = market && market.players ? Object.entries(market.players) : [];
+    $("stand-empty").classList.toggle("hidden", players.length > 0);
+    players.sort((x, y) => y[1].score - x[1].score);
+    const closed = !market || !market.open;
+    players.forEach(([name, p], i) => {
+      const tr = document.createElement("tr");
+      const c = (txt, cls) => { const td = document.createElement("td"); td.textContent = txt; if (cls) td.className = cls; return td; };
+      tr.append(c(i + 1), c(name), c(p.role), c(p.q, "num"), c(WX.fmt(p.score), "num"));
+      const tdBtn = document.createElement("td");
+      if (closed) {
+        const sw = document.createElement("button");
+        sw.className = "btn ghost small"; sw.textContent = "Switch role";
+        sw.addEventListener("click", () => switchRole(name));
+        const rm = document.createElement("button");
+        rm.className = "btn ghost small"; rm.style.marginLeft = "6px"; rm.textContent = "Remove";
+        rm.addEventListener("click", () => removePlayer(name));
+        tdBtn.append(sw, rm);
+      }
+      tr.append(tdBtn);
+      tb.appendChild(tr);
+    });
+  }
+
+  function switchRole(name) {
+    WX.gameRef(room, "market").transaction(m => {
+      if (!m || !m.players || !m.players[name] || m.open) return m;
+      m.players[name].role = m.players[name].role === "buyer" ? "seller" : "buyer";
+      if (m.orders && m.orders[name]) delete m.orders[name];
+      return m;
+    });
+  }
+  function removePlayer(name) {
+    if (!confirm("Remove " + name + " from the game?")) return;
+    WX.gameRef(room, "market").transaction(m => {
+      if (!m || m.open) return m;
+      if (m.players) delete m.players[name];
+      if (m.orders) delete m.orders[name];
+      return m;
+    });
+  }
+
+  // ---------- book & KPIs ----------
+  function renderBook() {
+    const bids = [], asks = [];
+    if (market && market.orders) {
+      for (const [n, o] of Object.entries(market.orders)) {
+        (o.side === "bid" ? bids : asks).push({ name: n, price: o.price, ts: o.ts });
+      }
+    }
+    bids.sort((x, y) => y.price - x.price || x.ts - y.ts);
+    asks.sort((x, y) => x.price - y.price || x.ts - y.ts);
+    const fill = (id, rows) => {
+      const tb = $(id); tb.innerHTML = "";
+      for (const r of rows) {
+        const tr = document.createElement("tr");
+        const t1 = document.createElement("td"); t1.textContent = r.name;
+        const t2 = document.createElement("td"); t2.className = "num"; t2.textContent = WX.fmt(r.price);
+        tr.append(t1, t2); tb.appendChild(tr);
+      }
+    };
+    fill("d-bids", bids); fill("d-asks", asks);
+  }
+
+  function renderKPIs() {
+    const players = market && market.players ? Object.values(market.players) : [];
+    const buyers = players.filter(p => p.role === "buyer").length;
+    $("k-players").textContent = players.length;
+    $("k-split").textContent = buyers + " / " + (players.length - buyers);
+    const rd = meta ? meta.round || 0 : 0;
+    const roundTrades = trades.filter(t => t.round === rd);
+    $("k-trades").textContent = roundTrades.length;
+    $("k-last").textContent = trades.length ? WX.fmt(trades[trades.length - 1].price) : "—";
+    $("k-avg").textContent = roundTrades.length
+      ? WX.fmt(Math.round(roundTrades.reduce((s, t) => s + t.price, 0) / roundTrades.length)) : "—";
+    if (market && market.params) {
+      const eq = WX.equilibrium(market.params);
+      $("k-eqp").textContent = WX.fmt(Math.round(eq.price));
+      $("k-eqq").textContent = eq.qtyPerPair.toFixed(1);
+    }
+  }
+
+  function renderMeta() {
+    if (!meta) return;
+    $("d-round").textContent = (meta.round || 0) + " / " + (meta.totalRounds || "—");
+    $("d-phase").textContent = meta.phase || "lobby";
+    const start = $("btn-start");
+    const nxt = (meta.round || 0) + 1;
+    start.textContent = meta.phase === "between" || meta.phase === "lobby"
+      ? "Start round " + Math.min(nxt, meta.totalRounds || nxt)
+      : meta.phase === "ended" ? "All rounds done" : "Round running…";
+    start.disabled = meta.phase === "running" || meta.phase === "paused" || meta.phase === "ended";
+    $("btn-pause").textContent = meta.phase === "paused" ? "Resume" : "Pause";
+    $("btn-pause").disabled = meta.phase !== "running" && meta.phase !== "paused";
+    $("btn-end").disabled = meta.phase !== "running" && meta.phase !== "paused";
+    renderKPIs();
+  }
+
+  // ---------- chart ----------
+  const ROUND_COLORS = ["#1e4e5f", "#0b7a55", "#b5382f", "#9a7b1c", "#5c4a9e", "#3a7ca5"];
+  const eqLinePlugin = {
+    id: "eqLine",
+    afterDatasetsDraw(c) {
+      if (!market || !market.params) return;
+      const eq = WX.equilibrium(market.params).price / 100;
+      const y = c.scales.y.getPixelForValue(eq);
+      if (!isFinite(y)) return;
+      const { left, right } = c.chartArea;
+      const ctx = c.ctx;
+      ctx.save();
+      ctx.strokeStyle = "#16232b"; ctx.setLineDash([7, 6]); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "600 11px 'IBM Plex Mono', monospace"; ctx.fillStyle = "#16232b";
+      ctx.fillText("p* = $" + eq.toFixed(2), left + 6, y - 6);
+      ctx.restore();
+    }
+  };
+
+  function renderChart() {
+    const byRound = new Map();
+    trades.forEach((t, i) => {
+      if (!byRound.has(t.round)) byRound.set(t.round, []);
+      byRound.get(t.round).push({ x: i + 1, y: t.price / 100 });
+    });
+    const datasets = [...byRound.entries()].map(([rd, pts]) => ({
+      label: "Round " + rd,
+      data: pts,
+      showLine: true,
+      borderColor: ROUND_COLORS[(rd - 1) % ROUND_COLORS.length],
+      backgroundColor: ROUND_COLORS[(rd - 1) % ROUND_COLORS.length],
+      pointRadius: 3.5, borderWidth: 1.5, tension: 0
+    }));
+    if (!chart) {
+      chart = new Chart($("chart"), {
+        type: "scatter",
+        data: { datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          scales: {
+            x: { title: { display: true, text: "Trade #" }, ticks: { precision: 0 } },
+            y: { title: { display: true, text: "Price ($)" } }
+          },
+          plugins: { legend: { position: "bottom" } }
+        },
+        plugins: [eqLinePlugin]
+      });
+    } else {
+      chart.data.datasets = datasets;
+      chart.update("none");
+    }
+  }
+
+  // ---------- CSV ----------
+  $("btn-csv-trades").addEventListener("click", () => {
+    const rows = [["timestamp_utc", "round", "buyer", "seller", "price",
+      "buyer_marginal_utility", "seller_marginal_cost", "buyer_surplus", "seller_surplus", "total_surplus"]];
+    for (const t of trades) {
+      rows.push([new Date(t.t).toISOString(), t.round, t.buyer, t.seller,
+        (t.price / 100).toFixed(2), (t.buyerMU / 100).toFixed(2), (t.sellerMC / 100).toFixed(2),
+        (t.buyerGain / 100).toFixed(2), (t.sellerGain / 100).toFixed(2),
+        ((t.buyerGain + t.sellerGain) / 100).toFixed(2)]);
+    }
+    WX.downloadText("widget-exchange-" + room + "-trades.csv", WX.toCSV(rows));
+  });
+
+  $("btn-csv-standings").addEventListener("click", () => {
+    const rows = [["trader", "role", "widgets_current_round", "total_score"]];
+    const players = market && market.players ? Object.entries(market.players) : [];
+    players.sort((x, y) => y[1].score - x[1].score);
+    for (const [name, p] of players) {
+      rows.push([name, p.role, p.q, (p.score / 100).toFixed(2)]);
+    }
+    WX.downloadText("widget-exchange-" + room + "-standings.csv", WX.toCSV(rows));
+  });
+
+  // ---------- reset ----------
+  $("btn-reset").addEventListener("click", () => {
+    if (!confirm("Reset the game? This clears all trades, scores, and orders (players stay joined). Download your CSVs first!")) return;
+    Promise.all([
+      WX.gameRef(room, "trades").remove(),
+      WX.gameRef(room, "market").transaction(m => {
+        if (!m) return m;
+        m.open = false; m.orders = {};
+        if (m.players) for (const p of Object.values(m.players)) { p.q = 0; p.score = 0; }
+        return m;
+      }),
+      WX.gameRef(room, "meta").update({ phase: "lobby", round: 0, roundEndsAt: 0, pauseRemainingMs: 0 })
+    ]).then(() => toast("Game reset. Fresh market."));
+  });
+
+  // ---------- toast ----------
+  let toastTimer = null;
+  function toast(msg) {
+    const el = $("toast");
+    el.textContent = msg; el.className = "show";
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = ""; }, 2600);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Widget Exchange</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ======================= JOIN SCREEN ======================= -->
+<div id="join-screen" class="join-wrap">
+  <div class="join-hero">
+    <h1>Widget <span>Exchange</span></h1>
+    <p>A live market experiment. Enter the room code from your instructor.</p>
+  </div>
+  <div class="card">
+    <label for="join-room">Room code</label>
+    <input id="join-room" type="text" autocomplete="off" autocapitalize="characters"
+           maxlength="8" placeholder="e.g. MKT25">
+    <label for="join-name">Your trading name</label>
+    <input id="join-name" type="text" autocomplete="off" maxlength="14"
+           placeholder="3–14 letters or numbers">
+    <button id="join-btn" class="btn">Enter the exchange</button>
+    <div id="join-err" class="err" role="alert"></div>
+  </div>
+</div>
+
+<!-- ======================= GAME SCREEN ======================= -->
+<div id="game-screen" class="hidden">
+  <div class="topbar">
+    <div class="wordmark">Widget<span>X</span></div>
+    <div class="slot"><span class="lbl">Room</span><span class="val" id="t-room">—</span></div>
+    <div class="slot"><span class="lbl">Trader</span><span class="val" id="t-name">—</span></div>
+    <div class="slot"><span class="lbl">Round</span><span class="val" id="t-round">—</span></div>
+    <div class="slot clock"><span class="lbl">Time left</span><span class="val" id="t-clock">—:—</span></div>
+  </div>
+
+  <div class="tape"><div class="tape-inner" id="tape">
+    <span class="chip empty">No trades yet — the tape starts rolling when the first widget changes hands.</span>
+  </div></div>
+
+  <div class="wrap">
+    <div id="banner" class="banner lobby">Waiting for your instructor to start the round…</div>
+
+    <div class="grid">
+      <!-- Your position + order form -->
+      <div>
+        <div class="card">
+          <h2>Your position</h2>
+          <p style="margin:0 0 8px"><span id="role-badge" class="role-badge buyer">Buyer</span></p>
+          <div class="stat-row"><span class="k">Score (total profit)</span>
+            <span class="v" id="my-score">$0.00</span></div>
+          <div class="stat-row"><span class="k" id="my-q-label">Widgets bought this round</span>
+            <span class="v" id="my-q">0</span></div>
+          <div class="stat-row"><span class="k" id="my-mv-label">Marginal utility of next widget</span>
+            <span class="v bignum" id="my-mv" style="font-size:1.45rem">—</span></div>
+          <p class="muted" id="my-formula" style="font-size:0.82rem;margin:8px 0 0"></p>
+        </div>
+
+        <div class="card">
+          <h2 id="order-title">Post your bid</h2>
+          <label for="price-in" id="price-label">Bid price ($)</label>
+          <input id="price-in" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+          <button id="submit-btn" class="btn bid">Place bid</button>
+          <button id="cancel-btn" class="btn ghost hidden">Cancel my order</button>
+          <div id="order-err" class="err" role="alert"></div>
+          <p class="muted" style="font-size:0.82rem;margin-top:8px">
+            One outstanding order at a time — posting a new price replaces your old one.
+            If your price crosses a resting order, you trade immediately at the
+            <em>resting</em> order’s price.
+          </p>
+        </div>
+      </div>
+
+      <!-- Order book -->
+      <div class="card">
+        <h2>Order book — live</h2>
+        <div class="book-cols">
+          <div>
+            <div class="book-head bid-c">Bids (buyers)</div>
+            <table aria-label="Bids"><thead><tr><th>Trader</th><th class="num">Price</th></tr></thead>
+              <tbody id="bids-body"></tbody></table>
+            <div id="bids-empty" class="empty-note">No bids yet.</div>
+          </div>
+          <div>
+            <div class="book-head ask-c">Asks (sellers)</div>
+            <table aria-label="Asks"><thead><tr><th>Trader</th><th class="num">Price</th></tr></thead>
+              <tbody id="asks-body"></tbody></table>
+            <div id="asks-empty" class="empty-note">No asks yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Trades -->
+      <div class="card">
+        <h2>Completed trades</h2>
+        <table aria-label="Trades"><thead>
+          <tr><th>Rd</th><th>Buyer</th><th>Seller</th><th class="num">Price</th></tr>
+        </thead><tbody id="trades-body"></tbody></table>
+        <div id="trades-empty" class="empty-note">Trades will appear here the moment they execute.</div>
+      </div>
+    </div>
+    <footer class="credit">Widget Exchange · a classroom double-auction experiment</footer>
+  </div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="shared.js"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+
+  let room = null, myName = null, me = null;      // me = {role, q, score}
+  let meta = null, market = null;
+  let joinedAt = 0;
+  let clockTimer = null;
+
+  // ---------- join ----------
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("room")) $("join-room").value = WX.cleanRoom(qs.get("room"));
+  const savedName = sessionStorage.getItem("wx-name");
+  if (savedName) $("join-name").value = savedName;
+
+  $("join-btn").addEventListener("click", join);
+  $("join-name").addEventListener("keydown", e => { if (e.key === "Enter") join(); });
+
+  function join() {
+    const errEl = $("join-err");
+    errEl.textContent = "";
+    room = WX.cleanRoom($("join-room").value);
+    const name = $("join-name").value.trim();
+    if (!WX.ROOM_RE.test(room)) { errEl.textContent = "Room codes are 4–8 letters and numbers."; return; }
+    const bad = WX.nameProblem(name);
+    if (bad) { errEl.textContent = bad; return; }
+
+    let db;
+    try { db = WX.initFirebase(); }
+    catch (e) { errEl.textContent = e.message; return; }
+
+    $("join-btn").disabled = true;
+    WX.joinGame(room, name).then(player => {
+      myName = name;
+      sessionStorage.setItem("wx-name", name);
+      joinedAt = WX.serverNow();
+      $("join-screen").classList.add("hidden");
+      $("game-screen").classList.remove("hidden");
+      $("t-room").textContent = room;
+      $("t-name").textContent = myName;
+      subscribe();
+    }).catch(e => {
+      errEl.textContent = e.message || "Could not join. Check your connection and try again.";
+    }).finally(() => { $("join-btn").disabled = false; });
+  }
+
+  // ---------- live subscriptions ----------
+  function subscribe() {
+    WX.gameRef(room, "meta").on("value", s => { meta = s.val(); renderMeta(); });
+    WX.gameRef(room, "market").on("value", s => {
+      market = s.val();
+      me = market && market.players ? market.players[myName] : null;
+      renderPosition(); renderBook(); renderMeta();
+    });
+    WX.gameRef(room, "trades").limitToLast(80).on("value", s => {
+      const list = [];
+      s.forEach(ch => { list.push(Object.assign({ id: ch.key }, ch.val())); });
+      renderTrades(list);
+    });
+    WX.gameRef(room, "trades").limitToLast(1).on("child_added", s => {
+      const t = s.val();
+      if (!t || t.t <= joinedAt) return;
+      if (t.buyer === myName) {
+        toast("You bought at " + WX.fmt(t.price) + " · gain " + WX.fmt(t.buyerGain), true);
+      } else if (t.seller === myName) {
+        toast("You sold at " + WX.fmt(t.price) + " · gain " + WX.fmt(t.sellerGain), true);
+      }
+    });
+    if (clockTimer) clearInterval(clockTimer);
+    clockTimer = setInterval(renderClock, 250);
+  }
+
+  // ---------- rendering ----------
+  function marketIsOpen() {
+    return !!(market && market.open && meta && meta.phase === "running" &&
+              WX.serverNow() < (meta.roundEndsAt || 0));
+  }
+
+  function renderMeta() {
+    if (!meta) return;
+    $("t-round").textContent = (meta.round || 0) + " / " + (meta.totalRounds || "—");
+    const b = $("banner");
+    const phase = meta.phase || "lobby";
+    b.className = "banner " + phase;
+    b.textContent = {
+      lobby: "Waiting for your instructor to start round 1…",
+      running: "Market open — trade!",
+      paused: "Market paused by your instructor. Hold tight.",
+      between: "Round " + (meta.round || "") + " is over. Waiting for the next round…",
+      ended: "The game has ended. Final scores are locked in — look up at the podium."
+    }[phase] || "…";
+    updateFormEnabled();
+  }
+
+  function renderClock() {
+    const el = $("t-clock");
+    if (!meta || meta.phase !== "running" || !meta.roundEndsAt) {
+      el.textContent = meta && meta.phase === "paused" ? "PAUSED" : "—:—";
+      el.className = "val"; updateFormEnabled(); return;
+    }
+    const ms = Math.max(0, meta.roundEndsAt - WX.serverNow());
+    const s = Math.ceil(ms / 1000);
+    el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    el.className = "val" + (s <= 10 ? " crit" : s <= 30 ? " warn" : "");
+    if (ms <= 0) updateFormEnabled();
+  }
+
+  function renderPosition() {
+    if (!me || !market) return;
+    const isBuyer = me.role === "buyer";
+    const badge = $("role-badge");
+    badge.textContent = isBuyer ? "Buyer" : "Seller";
+    badge.className = "role-badge " + me.role;
+    $("my-score").textContent = WX.fmt(me.score);
+    $("my-score").style.color = me.score < 0 ? "var(--ask)" : "var(--gold)";
+    $("my-q-label").textContent = isBuyer ? "Widgets bought this round" : "Widgets sold this round";
+    $("my-q").textContent = me.q;
+    const p = market.params;
+    const mv = isBuyer ? WX.muNext(p, me.q) : WX.mcNext(p, me.q);
+    $("my-mv-label").textContent = isBuyer
+      ? "Marginal utility of your next widget"
+      : "Marginal cost of your next widget";
+    $("my-mv").textContent = WX.fmt(mv);
+    $("my-mv").style.color = isBuyer ? "var(--bid)" : "var(--ask)";
+    $("my-formula").textContent = isBuyer
+      ? "Your value schedule: MU = " + WX.fmt(p.a) + " − " + WX.fmt(p.b) + " × Q. Profit per purchase = MU − price paid."
+      : "Your cost schedule: MC = " + WX.fmt(p.c) + " + " + WX.fmt(p.d) + " × Q. Profit per sale = price received − MC.";
+
+    // order form skin
+    $("order-title").textContent = isBuyer ? "Post your bid" : "Post your ask";
+    $("price-label").textContent = isBuyer ? "Bid price ($)" : "Ask price ($)";
+    const btn = $("submit-btn");
+    btn.textContent = isBuyer ? "Place bid" : "Place ask";
+    btn.className = "btn " + (isBuyer ? "bid" : "ask");
+    updateFormEnabled();
+  }
+
+  function renderBook() {
+    const bids = [], asks = [];
+    if (market && market.orders) {
+      for (const [n, o] of Object.entries(market.orders)) {
+        (o.side === "bid" ? bids : asks).push({ name: n, price: o.price, ts: o.ts });
+      }
+    }
+    bids.sort((x, y) => y.price - x.price || x.ts - y.ts);
+    asks.sort((x, y) => x.price - y.price || x.ts - y.ts);
+    fillBook("bids-body", "bids-empty", bids);
+    fillBook("asks-body", "asks-empty", asks);
+
+    const mine = market && market.orders ? market.orders[myName] : null;
+    $("cancel-btn").classList.toggle("hidden", !mine);
+    if (mine) $("cancel-btn").textContent = "Cancel my " + (mine.side === "bid" ? "bid" : "ask") +
+      " at " + WX.fmt(mine.price);
+  }
+
+  function fillBook(bodyId, emptyId, rows) {
+    const tb = $(bodyId); tb.innerHTML = "";
+    $(emptyId).classList.toggle("hidden", rows.length > 0);
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      if (r.name === myName) tr.className = "mine";
+      const td1 = document.createElement("td");
+      td1.textContent = r.name === myName ? r.name + " (you)" : r.name;
+      const td2 = document.createElement("td");
+      td2.className = "num"; td2.textContent = WX.fmt(r.price);
+      tr.append(td1, td2); tb.appendChild(tr);
+    }
+  }
+
+  let lastTradeId = null;
+  function renderTrades(list) {
+    const tb = $("trades-body"); tb.innerHTML = "";
+    $("trades-empty").classList.toggle("hidden", list.length > 0);
+    const newest = list.length ? list[list.length - 1].id : null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const t = list[i];
+      const tr = document.createElement("tr");
+      if (t.buyer === myName || t.seller === myName) tr.className = "mine";
+      if (t.id === newest && newest !== lastTradeId) tr.classList.add("flash");
+      const c = (txt, cls) => { const td = document.createElement("td"); td.textContent = txt; if (cls) td.className = cls; return td; };
+      tr.append(c(t.round), c(t.buyer), c(t.seller), c(WX.fmt(t.price), "num"));
+      tb.appendChild(tr);
+    }
+    lastTradeId = newest;
+    renderTape(list);
+  }
+
+  function renderTape(list) {
+    const tape = $("tape");
+    if (!list.length) return;
+    tape.innerHTML = "";
+    let prev = null;
+    for (const t of list.slice(-25)) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      const dir = prev === null ? "" : t.price > prev ? "up" : t.price < prev ? "dn" : "";
+      const arrow = dir === "up" ? " ▲" : dir === "dn" ? " ▼" : "";
+      chip.innerHTML = "WGT <b>" + WX.fmt(t.price) + "</b><span class='" + dir + "'>" + arrow +
+        "</span> <span class='muted'>" + t.buyer + "←" + t.seller + "</span>";
+      tape.appendChild(chip);
+      prev = t.price;
+    }
+  }
+
+  // ---------- ordering ----------
+  function updateFormEnabled() {
+    const open = marketIsOpen();
+    $("submit-btn").disabled = !open;
+    $("price-in").disabled = !open;
+  }
+
+  $("submit-btn").addEventListener("click", submit);
+  $("price-in").addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+
+  function submit() {
+    const errEl = $("order-err"); errEl.textContent = ""; errEl.classList.remove("ok");
+    if (!marketIsOpen()) { errEl.textContent = "The market is closed right now."; return; }
+    const raw = $("price-in").value;
+    const priceCents = WX.toCents(raw);
+    if (!isFinite(priceCents) || raw === "" || priceCents < 0 || priceCents > 1000000) {
+      errEl.textContent = "Enter a price between $0.00 and $10,000."; return;
+    }
+    const side = me.role === "buyer" ? "bid" : "ask";
+    $("submit-btn").disabled = true;
+    WX.submitOrder(room, myName, side, priceCents).then(res => {
+      if (res.status === "rested") {
+        errEl.classList.add("ok");
+        errEl.textContent = "Your " + side + " is live at " + WX.fmt(priceCents) + ".";
+        $("price-in").value = "";
+      } else if (res.status === "traded") {
+        $("price-in").value = "";
+      } else if (res.status === "closed") {
+        errEl.textContent = "The market closed just before your order arrived.";
+      } else if (res.status === "retry") {
+        errEl.textContent = "The book was busy — try again.";
+      }
+    }).catch(() => { errEl.textContent = "Connection hiccup — try again."; })
+      .finally(updateFormEnabled);
+  }
+
+  $("cancel-btn").addEventListener("click", () => {
+    WX.cancelOrder(room, myName).then(() => toast("Order cancelled."));
+  });
+
+  // ---------- toast ----------
+  let toastTimer = null;
+  function toast(msg, isTrade) {
+    const el = $("toast");
+    el.textContent = msg;
+    el.className = isTrade ? "trade show" : "show";
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = ""; }, 3200);
+  }
+})();
+</script>
+</body>
+</html>

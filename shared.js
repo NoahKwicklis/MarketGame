@@ -124,6 +124,27 @@
     return child ? base.child(child) : base;
   }
 
+  // ---------- top-of-book quotes ----------
+  function bestQuotes(orders) {
+    let bid = null, ask = null;
+    if (orders) for (const o of Object.values(orders)) {
+      if (!o) continue;
+      if (o.side === "bid") { if (bid === null || o.price > bid) bid = o.price; }
+      else { if (ask === null || o.price < ask) ask = o.price; }
+    }
+    return { bid: bid, ask: ask };
+  }
+
+  // Record the best bid/ask after a book-changing event, so clients can
+  // draw the bid–ask spread over time. Missing side is simply omitted.
+  function pushQuote(room, round, orders, ts) {
+    const q = bestQuotes(orders);
+    const rec = { t: ts || serverNow(), round: round || 0 };
+    if (q.bid !== null) rec.bid = q.bid;
+    if (q.ask !== null) rec.ask = q.ask;
+    return gameRef(room, "quotes").push(rec);
+  }
+
   // ---------- matching engine ----------
   // Pure function applied inside a transaction on /market.
   // Attempts to place `side` order for `name` at `price` (cents).
@@ -191,27 +212,37 @@
 
   // Public: submit (or revise) an order. Resolves to
   //   {status: 'traded'|'rested'|'closed'|..., trade?}
-  function submitOrder(room, name, side, priceCents) {
+  // `round` is the caller's current round (fetched if omitted).
+  function submitOrder(room, name, side, priceCents, round) {
     const out = {};
     const ts = serverNow();
     return gameRef(room, "market").transaction(m =>
       placeOrderInMarket(m, name, side, priceCents, ts, out)
     ).then(res => {
       if (!res.committed) return { status: "retry" };
-      if (out.status === "traded") {
-        const meta = { round: 0 };
-        return gameRef(room, "meta/round").once("value").then(s => {
-          const round = s.val() || 0;
-          const rec = Object.assign({ round: round, t: ts }, out.trade);
-          return gameRef(room, "trades").push(rec).then(() => ({ status: "traded", trade: rec }));
-        });
+      if (out.status !== "traded" && out.status !== "rested") {
+        return { status: out.status };          // book unchanged, nothing to log
       }
-      return { status: out.status };
+      const orders = res.snapshot.child("orders").val();
+      const roundP = (round != null)
+        ? Promise.resolve(round)
+        : gameRef(room, "meta/round").once("value").then(s => s.val() || 0);
+      return roundP.then(rd => {
+        const jobs = [pushQuote(room, rd, orders, ts)];
+        if (out.status === "traded") {
+          const rec = Object.assign({ round: rd, t: ts }, out.trade);
+          jobs.push(gameRef(room, "trades").push(rec));
+          return Promise.all(jobs).then(() => ({ status: "traded", trade: rec }));
+        }
+        return Promise.all(jobs).then(() => ({ status: "rested" }));
+      });
     });
   }
 
-  function cancelOrder(room, name) {
-    return gameRef(room, "market/orders/" + name).remove();
+  function cancelOrder(room, name, round) {
+    return gameRef(room, "market/orders/" + name).remove()
+      .then(() => gameRef(room, "market/orders").once("value"))
+      .then(s => pushQuote(room, round || 0, s.val()));
   }
 
   // Public: join a room (or rejoin after a refresh). Balances roles.
@@ -261,6 +292,7 @@
     nameProblem, cleanRoom, randomRoom, ROOM_RE,
     initFirebase, serverNow, gameRef,
     submitOrder, cancelOrder, joinGame, placeOrderInMarket,
+    bestQuotes, pushQuote,
     toCSV, downloadText
   };
 })(window);

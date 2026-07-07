@@ -298,7 +298,8 @@
         roundEndsAt: startTs + (meta.roundSeconds || 300) * 1000,
         pauseRemainingMs: 0
       }),
-      WX.gameRef(room, "roundStarts/" + next).set(startTs)
+      WX.gameRef(room, "roundStarts/" + next).set(startTs),
+      WX.pushQuote(room, next, null, startTs)   // empty book at the opening bell
     ])).then(() => toast("Round " + next + " is live."));
   }
 
@@ -606,6 +607,7 @@
     Promise.all([
       WX.gameRef(room, "trades").remove(),
       WX.gameRef(room, "roundStarts").remove(),
+      WX.gameRef(room, "quotes").remove(),
       WX.gameRef(room, "market").transaction(m => {
         if (!m) return m;
         m.open = false; m.orders = {};

@@ -112,14 +112,19 @@
     </div>
 
     <div class="card">
-      <h2 id="candle-title">Price action</h2>
-      <svg id="candles" viewBox="0 0 800 230" role="img"
-           aria-label="Candlestick chart of transaction prices over time"></svg>
-      <div id="candle-note" class="empty-note">Candles appear once trades happen this round.</div>
+      <h2 id="pchart-title">Price &amp; bid–ask spread</h2>
+      <div class="pchart-legend">
+        <span><svg width="26" height="8"><circle cx="13" cy="4" r="3.2" fill="#16232b"/></svg> trade</span>
+        <span><svg width="26" height="8"><line x1="0" x2="26" y1="4" y2="4" stroke="#0b7a55" stroke-width="2" stroke-dasharray="6 4"/></svg> best bid</span>
+        <span><svg width="26" height="8"><line x1="0" x2="26" y1="4" y2="4" stroke="#b5382f" stroke-width="2" stroke-dasharray="8 3 2 3"/></svg> best ask</span>
+      </div>
+      <svg id="pchart" viewBox="0 0 800 230" role="img"
+           aria-label="Scatterplot of transaction prices over time with best bid and best ask lines"></svg>
+      <div id="pchart-note" class="empty-note">The plot fills in once orders and trades happen this round.</div>
       <p class="muted" style="font-size:0.8rem;margin:6px 0 0">
-        Each candle summarizes a slice of time: the bar spans the first and last
-        trade price in that interval (green if price ended higher, red if lower),
-        and the thin wick spans the highest and lowest.
+        Dots are executed trades. The gap between the green (highest bid) and red
+        (lowest ask) lines is the bid–ask spread — watch it tighten as the market
+        finds its price.
       </p>
     </div>
     <footer class="credit">Widget Exchange · a classroom double-auction experiment</footer>
@@ -139,9 +144,10 @@
 
   let room = null, myName = null, me = null;      // me = {role, q, score}
   let meta = null, market = null;
-  let roundStarts = {}, allTrades = [];
+  let roundStarts = {}, allTrades = [], allQuotes = [];
   let joinedAt = 0;
   let clockTimer = null;
+  let lastChartPaint = 0;
 
   // ---------- join ----------
   const qs = new URLSearchParams(location.search);
@@ -196,7 +202,13 @@
     });
     WX.gameRef(room, "roundStarts").on("value", s => {
       roundStarts = s.val() || {};
-      renderCandles();
+      renderPriceChart();
+    });
+    WX.gameRef(room, "quotes").on("value", s => {
+      allQuotes = [];
+      s.forEach(ch => { allQuotes.push(ch.val()); });
+      allQuotes.sort((x, y) => x.t - y.t);
+      renderPriceChart();
     });
     WX.gameRef(room, "trades").limitToLast(1).on("child_added", s => {
       const t = s.val();
@@ -233,7 +245,7 @@
       ended: "The game has ended. Final scores are locked in — look up at the podium."
     }[phase] || "…";
     updateFormEnabled();
-    renderCandles();
+    renderPriceChart();
   }
 
   function renderClock() {
@@ -246,6 +258,10 @@
     const s = Math.ceil(ms / 1000);
     el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
     el.className = "val" + (s <= 10 ? " crit" : s <= 30 ? " warn" : "");
+    if (Date.now() - lastChartPaint > 1000) {   // stretch spread lines to "now"
+      lastChartPaint = Date.now();
+      renderPriceChart();
+    }
     if (ms <= 0) updateFormEnabled();
   }
 
@@ -329,61 +345,67 @@
     lastTradeId = newest;
     renderTape(list.slice(-25));
     renderSpark(list);
-    renderCandles();
+    renderPriceChart();
   }
 
-  // ---------- candlestick chart (public price action) ----------
-  function candleBucketSeconds(roundLen) {
-    for (const bs of [5, 10, 15, 20, 30, 60, 120, 300]) {
-      if (roundLen / bs <= 40) return bs;
-    }
-    return 600;
-  }
-
-  function renderCandles() {
-    const svg = $("candles");
-    // Show the current round if it exists, otherwise the latest round traded.
+  // ---------- price & spread chart (public price action) ----------
+  // Dots: executed trades. Green dashed step line: best outstanding bid.
+  // Red dash-dot step line: lowest outstanding ask. Both from the quotes log.
+  function renderPriceChart() {
+    const svg = $("pchart");
+    // Show the current round if it exists, otherwise the latest round with activity.
     let rd = meta && meta.round ? meta.round : 0;
     if (!rd && allTrades.length) rd = allTrades[allTrades.length - 1].round;
-    $("candle-title").textContent = rd ? "Price action — round " + rd : "Price action";
+    if (!rd && allQuotes.length) rd = allQuotes[allQuotes.length - 1].round;
+    $("pchart-title").textContent = rd
+      ? "Price & bid–ask spread — round " + rd : "Price & bid–ask spread";
     const roundTrades = allTrades.filter(t => t.round === rd);
-    const empty = roundTrades.length === 0;
-    $("candle-note").classList.toggle("hidden", !empty);
+    const roundQuotes = allQuotes.filter(q => q.round === rd);
+    const empty = roundTrades.length === 0 && roundQuotes.length === 0;
+    $("pchart-note").classList.toggle("hidden", !empty);
     svg.innerHTML = "";
     if (empty) return;
 
-    const t0 = (roundStarts && roundStarts[rd]) ? roundStarts[rd] : roundTrades[0].t;
-    const roundLen = (meta && meta.roundSeconds) ? meta.roundSeconds
-      : Math.max(60, Math.ceil((roundTrades[roundTrades.length - 1].t - t0) / 1000));
-    const bs = candleBucketSeconds(roundLen);
+    const firstT = roundTrades.length ? roundTrades[0].t : Infinity;
+    const firstQ = roundQuotes.length ? roundQuotes[0].t : Infinity;
+    const t0 = (roundStarts && roundStarts[rd]) ? roundStarts[rd] : Math.min(firstT, firstQ);
+    const roundLen = (meta && meta.roundSeconds) ? meta.roundSeconds : 300;
+    const secsOf = t => Math.min(roundLen, Math.max(0, (t - t0) / 1000));
+    // The spread lines extend to "now" during a live round, else to round end.
+    const liveNow = meta && meta.phase === "running" && rd === meta.round;
+    const endSecs = liveNow ? secsOf(WX.serverNow()) : roundLen;
 
-    // Build OHLC buckets.
-    const buckets = new Map();
-    for (const t of roundTrades) {
-      const secs = Math.max(0, (t.t - t0) / 1000);
-      const bi = Math.min(Math.floor(secs / bs), Math.ceil(roundLen / bs) - 1);
-      const p = t.price;
-      if (!buckets.has(bi)) buckets.set(bi, { o: p, h: p, l: p, c: p });
-      else {
-        const b = buckets.get(bi);
-        b.h = Math.max(b.h, p); b.l = Math.min(b.l, p); b.c = p;
+    // ----- y-range: anchor on trades; admit quotes unless they're wild outliers
+    let lo = Infinity, hi = -Infinity;
+    for (const t of roundTrades) { lo = Math.min(lo, t.price); hi = Math.max(hi, t.price); }
+    const qVals = [];
+    for (const q of roundQuotes) {
+      if (q.bid != null) qVals.push(q.bid);
+      if (q.ask != null) qVals.push(q.ask);
+    }
+    if (!isFinite(lo)) {                        // no trades yet: scale to quotes
+      for (const v of qVals) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    } else {
+      const span = Math.max(hi - lo, 100);      // admit quotes within a sane band
+      for (const v of qVals) {
+        if (v >= lo - 2 * span && v <= hi + 2 * span) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
       }
     }
-
-    // Geometry.
-    const W = 800, H = 230;
-    const M = { l: 52, r: 10, t: 10, b: 26 };
-    const pw = W - M.l - M.r, ph = H - M.t - M.b;
-    const nSlots = Math.ceil(roundLen / bs);
-    let lo = Infinity, hi = -Infinity;
-    for (const b of buckets.values()) { lo = Math.min(lo, b.l); hi = Math.max(hi, b.h); }
+    if (!isFinite(lo)) return;
     if (hi === lo) { hi += 50; lo -= 50; }
     const pad = (hi - lo) * 0.1;
     hi += pad; lo = Math.max(0, lo - pad);
-    const X = slot => M.l + pw * ((slot + 0.5) / nSlots);
-    const Y = cents => M.t + ph * (1 - (cents - lo) / (hi - lo));
-    const slotW = pw / nSlots;
-    const bodyW = Math.max(2, Math.min(14, slotW * 0.6));
+
+    // ----- geometry
+    const W = 800, H = 230;
+    const M = { l: 52, r: 10, t: 10, b: 26 };
+    const pw = W - M.l - M.r, ph = H - M.t - M.b;
+    const X = secs => M.l + pw * (secs / roundLen);
+    // Clamp so an off-scale troll quote pins to the plot edge instead of vanishing.
+    const Y = cents => {
+      const y = M.t + ph * (1 - (cents - lo) / (hi - lo));
+      return Math.min(H - M.b, Math.max(M.t, y));
+    };
 
     const NS = "http://www.w3.org/2000/svg";
     const el = (tag, attrs, text) => {
@@ -393,17 +415,16 @@
       svg.appendChild(e); return e;
     };
 
-    // y-axis gridlines + price labels
+    // ----- axes
     for (let i = 0; i <= 3; i++) {
       const cents = lo + (hi - lo) * (i / 3);
-      const y = Y(cents);
+      const y = M.t + ph * (1 - i / 3);
       el("line", { x1: M.l, x2: W - M.r, y1: y, y2: y, stroke: "#e2e8e2", "stroke-width": 1 });
       el("text", {
         x: M.l - 6, y: y + 4, "text-anchor": "end",
         "font-family": "IBM Plex Mono, monospace", "font-size": 11, fill: "#5c6b73"
       }, WX.fmt(Math.round(cents)));
     }
-    // x-axis time labels: start, midpoint, end of round
     const mmss = s => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
     [[0, "start"], [0.5, "middle"], [1, "end"]].forEach(([f, anchor]) => {
       el("text", {
@@ -412,18 +433,40 @@
       }, mmss(roundLen * f));
     });
 
-    // candles
-    const UP = "#0b7a55", DN = "#b5382f";
-    for (const [slot, b] of [...buckets.entries()].sort((a, z) => a[0] - z[0])) {
-      const up = b.c >= b.o;
-      const color = up ? UP : DN;
-      const x = X(slot);
-      el("line", { x1: x, x2: x, y1: Y(b.h), y2: Y(b.l), stroke: color, "stroke-width": 1.4 });
-      const yTop = Y(Math.max(b.o, b.c));
-      const hBody = Math.max(1.5, Math.abs(Y(b.o) - Y(b.c)));
-      el("rect", {
-        x: x - bodyW / 2, y: yTop, width: bodyW, height: hBody,
-        fill: color, rx: 1
+    // ----- bid/ask step lines from the quotes log
+    // Each quote is the book's top after an event; the level holds until the
+    // next event, so segments run horizontally and jump vertically.
+    function stepPath(key) {
+      let d = "", penDown = false, prevY = null;
+      for (let i = 0; i < roundQuotes.length; i++) {
+        const q = roundQuotes[i];
+        const v = q[key];
+        const xs = X(secsOf(q.t));
+        const xe = X(i + 1 < roundQuotes.length ? secsOf(roundQuotes[i + 1].t) : endSecs);
+        if (v == null) { penDown = false; prevY = null; continue; }
+        const y = Y(v);
+        if (!penDown) { d += "M" + xs.toFixed(1) + " " + y.toFixed(1); penDown = true; }
+        else if (prevY !== y) { d += "L" + xs.toFixed(1) + " " + y.toFixed(1); }
+        d += "L" + xe.toFixed(1) + " " + y.toFixed(1);
+        prevY = y;
+      }
+      return d;
+    }
+    const bidD = stepPath("bid"), askD = stepPath("ask");
+    if (bidD) el("path", {
+      d: bidD, fill: "none", stroke: "#0b7a55", "stroke-width": 2,
+      "stroke-dasharray": "6 5", "stroke-linejoin": "round"
+    });
+    if (askD) el("path", {
+      d: askD, fill: "none", stroke: "#b5382f", "stroke-width": 2,
+      "stroke-dasharray": "8 4 2 4", "stroke-linejoin": "round"
+    });
+
+    // ----- trade dots (drawn last, on top of the lines)
+    for (const t of roundTrades) {
+      el("circle", {
+        cx: X(secsOf(t.t)).toFixed(1), cy: Y(t.price).toFixed(1), r: 3.4,
+        fill: "#16232b", "fill-opacity": 0.85
       });
     }
   }
@@ -511,7 +554,7 @@
     const side = me.role === "buyer" ? "bid" : "ask";
     clickSound();
     $("submit-btn").disabled = true;
-    WX.submitOrder(room, myName, side, priceCents).then(res => {
+    WX.submitOrder(room, myName, side, priceCents, meta ? meta.round : null).then(res => {
       if (res.status === "rested") {
         errEl.classList.add("ok");
         errEl.textContent = "Your " + side + " is live at " + WX.fmt(priceCents) + ".";
@@ -528,7 +571,7 @@
   }
 
   $("cancel-btn").addEventListener("click", () => {
-    WX.cancelOrder(room, myName).then(() => toast("Order cancelled."));
+    WX.cancelOrder(room, myName, meta ? meta.round : 0).then(() => toast("Order cancelled."));
   });
 
   // ---------- sounds (synthesized, no files) ----------

@@ -36,6 +36,7 @@
     <div class="slot"><span class="lbl">Room</span><span class="val" id="t-room">—</span></div>
     <div class="slot"><span class="lbl">Trader</span><span class="val" id="t-name">—</span></div>
     <div class="slot"><span class="lbl">Round</span><span class="val" id="t-round">—</span></div>
+    <button id="snd-btn" class="snd" title="Sound on/off" aria-label="Toggle sound">&#128266;</button>
     <div class="slot clock"><span class="lbl">Time left</span><span class="val" id="t-clock">—:—</span></div>
   </div>
 
@@ -59,6 +60,11 @@
           <div class="stat-row"><span class="k" id="my-mv-label">Marginal utility of next widget</span>
             <span class="v bignum" id="my-mv" style="font-size:1.45rem">—</span></div>
           <p class="muted" id="my-formula" style="font-size:0.82rem;margin:8px 0 0"></p>
+          <div class="spark-wrap">
+            <div class="spark-label">Score over time</div>
+            <svg id="spark" viewBox="0 0 280 70" role="img" aria-label="Your score over time"></svg>
+            <div id="spark-note" class="muted" style="font-size:0.78rem">Your score line starts with your first trade.</div>
+          </div>
         </div>
 
         <div class="card">
@@ -104,6 +110,18 @@
         <div id="trades-empty" class="empty-note">Trades will appear here the moment they execute.</div>
       </div>
     </div>
+
+    <div class="card">
+      <h2 id="candle-title">Price action</h2>
+      <svg id="candles" viewBox="0 0 800 230" role="img"
+           aria-label="Candlestick chart of transaction prices over time"></svg>
+      <div id="candle-note" class="empty-note">Candles appear once trades happen this round.</div>
+      <p class="muted" style="font-size:0.8rem;margin:6px 0 0">
+        Each candle summarizes a slice of time: the bar spans the first and last
+        trade price in that interval (green if price ended higher, red if lower),
+        and the thin wick spans the highest and lowest.
+      </p>
+    </div>
     <footer class="credit">Widget Exchange · a classroom double-auction experiment</footer>
   </div>
 </div>
@@ -121,6 +139,7 @@
 
   let room = null, myName = null, me = null;      // me = {role, q, score}
   let meta = null, market = null;
+  let roundStarts = {}, allTrades = [];
   let joinedAt = 0;
   let clockTimer = null;
 
@@ -169,17 +188,24 @@
       me = market && market.players ? market.players[myName] : null;
       renderPosition(); renderBook(); renderMeta();
     });
-    WX.gameRef(room, "trades").limitToLast(80).on("value", s => {
+    WX.gameRef(room, "trades").on("value", s => {
       const list = [];
       s.forEach(ch => { list.push(Object.assign({ id: ch.key }, ch.val())); });
+      allTrades = list;
       renderTrades(list);
+    });
+    WX.gameRef(room, "roundStarts").on("value", s => {
+      roundStarts = s.val() || {};
+      renderCandles();
     });
     WX.gameRef(room, "trades").limitToLast(1).on("child_added", s => {
       const t = s.val();
       if (!t || t.t <= joinedAt) return;
       if (t.buyer === myName) {
+        dingSound();
         toast("You bought at " + WX.fmt(t.price) + " · gain " + WX.fmt(t.buyerGain), true);
       } else if (t.seller === myName) {
+        dingSound();
         toast("You sold at " + WX.fmt(t.price) + " · gain " + WX.fmt(t.sellerGain), true);
       }
     });
@@ -207,6 +233,7 @@
       ended: "The game has ended. Final scores are locked in — look up at the podium."
     }[phase] || "…";
     updateFormEnabled();
+    renderCandles();
   }
 
   function renderClock() {
@@ -288,9 +315,10 @@
   function renderTrades(list) {
     const tb = $("trades-body"); tb.innerHTML = "";
     $("trades-empty").classList.toggle("hidden", list.length > 0);
+    const shown = list.slice(-80);   // keep the table light on phones
     const newest = list.length ? list[list.length - 1].id : null;
-    for (let i = list.length - 1; i >= 0; i--) {
-      const t = list[i];
+    for (let i = shown.length - 1; i >= 0; i--) {
+      const t = shown[i];
       const tr = document.createElement("tr");
       if (t.buyer === myName || t.seller === myName) tr.className = "mine";
       if (t.id === newest && newest !== lastTradeId) tr.classList.add("flash");
@@ -299,7 +327,150 @@
       tb.appendChild(tr);
     }
     lastTradeId = newest;
-    renderTape(list);
+    renderTape(list.slice(-25));
+    renderSpark(list);
+    renderCandles();
+  }
+
+  // ---------- candlestick chart (public price action) ----------
+  function candleBucketSeconds(roundLen) {
+    for (const bs of [5, 10, 15, 20, 30, 60, 120, 300]) {
+      if (roundLen / bs <= 40) return bs;
+    }
+    return 600;
+  }
+
+  function renderCandles() {
+    const svg = $("candles");
+    // Show the current round if it exists, otherwise the latest round traded.
+    let rd = meta && meta.round ? meta.round : 0;
+    if (!rd && allTrades.length) rd = allTrades[allTrades.length - 1].round;
+    $("candle-title").textContent = rd ? "Price action — round " + rd : "Price action";
+    const roundTrades = allTrades.filter(t => t.round === rd);
+    const empty = roundTrades.length === 0;
+    $("candle-note").classList.toggle("hidden", !empty);
+    svg.innerHTML = "";
+    if (empty) return;
+
+    const t0 = (roundStarts && roundStarts[rd]) ? roundStarts[rd] : roundTrades[0].t;
+    const roundLen = (meta && meta.roundSeconds) ? meta.roundSeconds
+      : Math.max(60, Math.ceil((roundTrades[roundTrades.length - 1].t - t0) / 1000));
+    const bs = candleBucketSeconds(roundLen);
+
+    // Build OHLC buckets.
+    const buckets = new Map();
+    for (const t of roundTrades) {
+      const secs = Math.max(0, (t.t - t0) / 1000);
+      const bi = Math.min(Math.floor(secs / bs), Math.ceil(roundLen / bs) - 1);
+      const p = t.price;
+      if (!buckets.has(bi)) buckets.set(bi, { o: p, h: p, l: p, c: p });
+      else {
+        const b = buckets.get(bi);
+        b.h = Math.max(b.h, p); b.l = Math.min(b.l, p); b.c = p;
+      }
+    }
+
+    // Geometry.
+    const W = 800, H = 230;
+    const M = { l: 52, r: 10, t: 10, b: 26 };
+    const pw = W - M.l - M.r, ph = H - M.t - M.b;
+    const nSlots = Math.ceil(roundLen / bs);
+    let lo = Infinity, hi = -Infinity;
+    for (const b of buckets.values()) { lo = Math.min(lo, b.l); hi = Math.max(hi, b.h); }
+    if (hi === lo) { hi += 50; lo -= 50; }
+    const pad = (hi - lo) * 0.1;
+    hi += pad; lo = Math.max(0, lo - pad);
+    const X = slot => M.l + pw * ((slot + 0.5) / nSlots);
+    const Y = cents => M.t + ph * (1 - (cents - lo) / (hi - lo));
+    const slotW = pw / nSlots;
+    const bodyW = Math.max(2, Math.min(14, slotW * 0.6));
+
+    const NS = "http://www.w3.org/2000/svg";
+    const el = (tag, attrs, text) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      if (text != null) e.textContent = text;
+      svg.appendChild(e); return e;
+    };
+
+    // y-axis gridlines + price labels
+    for (let i = 0; i <= 3; i++) {
+      const cents = lo + (hi - lo) * (i / 3);
+      const y = Y(cents);
+      el("line", { x1: M.l, x2: W - M.r, y1: y, y2: y, stroke: "#e2e8e2", "stroke-width": 1 });
+      el("text", {
+        x: M.l - 6, y: y + 4, "text-anchor": "end",
+        "font-family": "IBM Plex Mono, monospace", "font-size": 11, fill: "#5c6b73"
+      }, WX.fmt(Math.round(cents)));
+    }
+    // x-axis time labels: start, midpoint, end of round
+    const mmss = s => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+    [[0, "start"], [0.5, "middle"], [1, "end"]].forEach(([f, anchor]) => {
+      el("text", {
+        x: M.l + pw * f, y: H - 8, "text-anchor": anchor,
+        "font-family": "IBM Plex Mono, monospace", "font-size": 11, fill: "#5c6b73"
+      }, mmss(roundLen * f));
+    });
+
+    // candles
+    const UP = "#0b7a55", DN = "#b5382f";
+    for (const [slot, b] of [...buckets.entries()].sort((a, z) => a[0] - z[0])) {
+      const up = b.c >= b.o;
+      const color = up ? UP : DN;
+      const x = X(slot);
+      el("line", { x1: x, x2: x, y1: Y(b.h), y2: Y(b.l), stroke: color, "stroke-width": 1.4 });
+      const yTop = Y(Math.max(b.o, b.c));
+      const hBody = Math.max(1.5, Math.abs(Y(b.o) - Y(b.c)));
+      el("rect", {
+        x: x - bodyW / 2, y: yTop, width: bodyW, height: hBody,
+        fill: color, rx: 1
+      });
+    }
+  }
+
+  // ---------- score sparkline ----------
+  function renderSpark(list) {
+    const svg = $("spark");
+    const pts = [{ x: 0, y: 0 }];               // everyone starts at $0
+    for (const t of list) {
+      if (t.buyer === myName) pts.push({ x: pts.length, y: pts[pts.length - 1].y + t.buyerGain });
+      else if (t.seller === myName) pts.push({ x: pts.length, y: pts[pts.length - 1].y + t.sellerGain });
+    }
+    const hasTrades = pts.length > 1;
+    $("spark-note").classList.toggle("hidden", hasTrades);
+    svg.innerHTML = "";
+    if (!hasTrades) return;
+
+    const W = 280, H = 70, PAD = 6;
+    const maxX = pts[pts.length - 1].x;
+    let lo = Math.min(0, ...pts.map(p => p.y));
+    let hi = Math.max(0, ...pts.map(p => p.y));
+    if (hi === lo) hi = lo + 1;
+    const X = x => PAD + (W - 2 * PAD) * (x / maxX);
+    const Y = y => H - PAD - (H - 2 * PAD) * ((y - lo) / (hi - lo));
+    const NS = "http://www.w3.org/2000/svg";
+    const el = (tag, attrs) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      return e;
+    };
+    // zero baseline
+    svg.appendChild(el("line", {
+      x1: PAD, x2: W - PAD, y1: Y(0), y2: Y(0),
+      stroke: "#c9d2cb", "stroke-dasharray": "3 4", "stroke-width": 1
+    }));
+    // score path
+    const d = pts.map((p, i) => (i ? "L" : "M") + X(p.x).toFixed(1) + " " + Y(p.y).toFixed(1)).join(" ");
+    const last = pts[pts.length - 1];
+    svg.appendChild(el("path", {
+      d: d, fill: "none", "stroke-width": 2, "stroke-linejoin": "round",
+      stroke: last.y >= 0 ? "var(--brand)" : "var(--ask)"
+    }));
+    // end dot
+    svg.appendChild(el("circle", {
+      cx: X(last.x), cy: Y(last.y), r: 3,
+      fill: last.y >= 0 ? "var(--gold)" : "var(--ask)"
+    }));
   }
 
   function renderTape(list) {
@@ -338,6 +509,7 @@
       errEl.textContent = "Enter a price between $0.00 and $10,000."; return;
     }
     const side = me.role === "buyer" ? "bid" : "ask";
+    clickSound();
     $("submit-btn").disabled = true;
     WX.submitOrder(room, myName, side, priceCents).then(res => {
       if (res.status === "rested") {
@@ -357,6 +529,62 @@
 
   $("cancel-btn").addEventListener("click", () => {
     WX.cancelOrder(room, myName).then(() => toast("Order cancelled."));
+  });
+
+  // ---------- sounds (synthesized, no files) ----------
+  let audioCtx = null;
+  let soundOn = sessionStorage.getItem("wx-sound") !== "off";
+
+  function ac() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+  // Browsers only allow audio after a user gesture; warm up on the first tap.
+  document.addEventListener("pointerdown", () => { try { ac(); } catch (e) {} }, { once: true });
+
+  function clickSound() {                       // short tactile tick
+    if (!soundOn) return;
+    try {
+      const ctx = ac(); if (!ctx) return;
+      const t = ctx.currentTime;
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "triangle";
+      o.frequency.setValueAtTime(1700, t);
+      o.frequency.exponentialRampToValueAtTime(600, t + 0.03);
+      g.gain.setValueAtTime(0.15, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t); o.stop(t + 0.06);
+    } catch (e) {}
+  }
+
+  function dingSound() {                        // quiet two-partial bell
+    if (!soundOn) return;
+    try {
+      const ctx = ac(); if (!ctx) return;
+      const t = ctx.currentTime;
+      for (const [freq, vol] of [[1046.5, 0.09], [2093, 0.045]]) {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = "sine"; o.frequency.value = freq;
+        g.gain.setValueAtTime(vol, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(t); o.stop(t + 0.75);
+      }
+    } catch (e) {}
+  }
+
+  const sndBtn = $("snd-btn");
+  function paintSnd() { sndBtn.textContent = soundOn ? "\u{1F50A}" : "\u{1F507}"; }
+  paintSnd();
+  sndBtn.addEventListener("click", () => {
+    soundOn = !soundOn;
+    sessionStorage.setItem("wx-sound", soundOn ? "on" : "off");
+    paintSnd();
+    if (soundOn) clickSound();
   });
 
   // ---------- toast ----------

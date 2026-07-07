@@ -115,6 +115,16 @@
         </div>
 
         <div class="card">
+          <h2>Trades in real time — seconds into round</h2>
+          <div class="chart-box"><canvas id="chart-time"></canvas></div>
+          <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
+            Each dot is a trade plotted at the moment it happened within its round.
+            The vertical marker sweeps with the clock during a live round, so you
+            can watch bursts and lulls as they occur.
+          </p>
+        </div>
+
+        <div class="card">
           <h2>Standings</h2>
           <table aria-label="Standings"><thead>
             <tr><th>#</th><th>Trader</th><th>Role</th><th class="num">Q (rd)</th>
@@ -163,7 +173,9 @@
   const DEFAULTS = { a: 12, b: 1, c: 2, d: 1, minutes: 5, rounds: 3 };
 
   let room = null, meta = null, market = null, trades = [];
-  let chart = null, clockTimer = null, autoEndGuard = false;
+  let roundStarts = {};                       // {roundNumber: startTimestampMs}
+  let chart = null, timeChart = null, clockTimer = null, autoEndGuard = false;
+  let lastSweepPaint = 0;
 
   // ---------- setup ----------
   const qs = new URLSearchParams(location.search);
@@ -209,6 +221,7 @@
       meta = s.val() || {};
       syncParamInputsOnce();
       renderMeta();
+      renderTimeChart();
     });
     WX.gameRef(room, "market").on("value", s => {
       market = s.val() || {};
@@ -219,7 +232,11 @@
       trades = [];
       s.forEach(ch => trades.push(Object.assign({ id: ch.key }, ch.val())));
       trades.sort((x, y) => x.t - y.t);
-      renderKPIs(); renderChart();
+      renderKPIs(); renderChart(); renderTimeChart();
+    });
+    WX.gameRef(room, "roundStarts").on("value", s => {
+      roundStarts = s.val() || {};
+      renderTimeChart();
     });
     if (clockTimer) clearInterval(clockTimer);
     clockTimer = setInterval(tick, 250);
@@ -248,6 +265,10 @@
     const s = Math.max(0, Math.ceil(ms / 1000));
     el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
     el.className = "val" + (s <= 10 ? " crit" : s <= 30 ? " warn" : "");
+    if (timeChart && Date.now() - lastSweepPaint > 1000) {
+      lastSweepPaint = Date.now();
+      timeChart.update("none");                // advances the "now" marker
+    }
     if (ms <= 0 && !autoEndGuard) { autoEndGuard = true; endRound().finally(() => { autoEndGuard = false; }); }
   }
 
@@ -264,17 +285,21 @@
     if (next > (meta.totalRounds || 1)) {
       errEl.textContent = "All " + meta.totalRounds + " rounds are done. Raise T or reset the game."; return;
     }
+    const startTs = WX.serverNow();
     WX.gameRef(room, "market").transaction(m => {
       if (!m) return m;
       m.orders = {};
       if (m.players) for (const p of Object.values(m.players)) p.q = 0;
       m.open = true;
       return m;
-    }).then(() => WX.gameRef(room, "meta").update({
-      phase: "running", round: next,
-      roundEndsAt: WX.serverNow() + (meta.roundSeconds || 300) * 1000,
-      pauseRemainingMs: 0
-    })).then(() => toast("Round " + next + " is live."));
+    }).then(() => Promise.all([
+      WX.gameRef(room, "meta").update({
+        phase: "running", round: next,
+        roundEndsAt: startTs + (meta.roundSeconds || 300) * 1000,
+        pauseRemainingMs: 0
+      }),
+      WX.gameRef(room, "roundStarts/" + next).set(startTs)
+    ])).then(() => toast("Round " + next + " is live."));
   }
 
   function pauseOrResume() {
@@ -482,12 +507,82 @@
     }
   }
 
+  // ---------- time chart (price vs seconds into round) ----------
+  // Round start = recorded timestamp; for games created before this feature,
+  // fall back to the round's first trade.
+  function t0For(round) {
+    if (roundStarts && roundStarts[round]) return roundStarts[round];
+    const first = trades.find(t => t.round === round);
+    return first ? first.t : null;
+  }
+
+  const sweepLinePlugin = {
+    id: "sweepLine",
+    afterDatasetsDraw(c) {
+      if (!meta || meta.phase !== "running") return;
+      const t0 = t0For(meta.round);
+      if (!t0) return;
+      const secs = (WX.serverNow() - t0) / 1000;
+      const x = c.scales.x.getPixelForValue(secs);
+      const { top, bottom, left, right } = c.chartArea;
+      if (!isFinite(x) || x < left || x > right) return;
+      const ctx = c.ctx;
+      ctx.save();
+      ctx.strokeStyle = "#9a7b1c"; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "600 11px 'IBM Plex Mono', monospace"; ctx.fillStyle = "#9a7b1c";
+      ctx.fillText("now", Math.min(x + 4, right - 30), top + 12);
+      ctx.restore();
+    }
+  };
+
+  function renderTimeChart() {
+    const byRound = new Map();
+    for (const t of trades) {
+      const t0 = t0For(t.round);
+      if (!t0) continue;
+      if (!byRound.has(t.round)) byRound.set(t.round, []);
+      byRound.get(t.round).push({ x: Math.max(0, (t.t - t0) / 1000), y: t.price / 100 });
+    }
+    const datasets = [...byRound.entries()].map(([rd, pts]) => ({
+      label: "Round " + rd,
+      data: pts,
+      borderColor: ROUND_COLORS[(rd - 1) % ROUND_COLORS.length],
+      backgroundColor: ROUND_COLORS[(rd - 1) % ROUND_COLORS.length],
+      pointRadius: 3.5, borderWidth: 1.5, showLine: false
+    }));
+    const roundLen = meta && meta.roundSeconds ? meta.roundSeconds : 300;
+    if (!timeChart) {
+      timeChart = new Chart($("chart-time"), {
+        type: "scatter",
+        data: { datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          scales: {
+            x: { title: { display: true, text: "Seconds into round" },
+                 min: 0, suggestedMax: roundLen },
+            y: { title: { display: true, text: "Price ($)" } }
+          },
+          plugins: { legend: { position: "bottom" } }
+        },
+        plugins: [eqLinePlugin, sweepLinePlugin]
+      });
+    } else {
+      timeChart.data.datasets = datasets;
+      timeChart.options.scales.x.suggestedMax = roundLen;
+      timeChart.update("none");
+    }
+  }
+
   // ---------- CSV ----------
   $("btn-csv-trades").addEventListener("click", () => {
-    const rows = [["timestamp_utc", "round", "buyer", "seller", "price",
+    const rows = [["timestamp_utc", "round", "seconds_into_round", "buyer", "seller", "price",
       "buyer_marginal_utility", "seller_marginal_cost", "buyer_surplus", "seller_surplus", "total_surplus"]];
     for (const t of trades) {
-      rows.push([new Date(t.t).toISOString(), t.round, t.buyer, t.seller,
+      const t0 = t0For(t.round);
+      const secs = t0 ? ((t.t - t0) / 1000).toFixed(1) : "";
+      rows.push([new Date(t.t).toISOString(), t.round, secs, t.buyer, t.seller,
         (t.price / 100).toFixed(2), (t.buyerMU / 100).toFixed(2), (t.sellerMC / 100).toFixed(2),
         (t.buyerGain / 100).toFixed(2), (t.sellerGain / 100).toFixed(2),
         ((t.buyerGain + t.sellerGain) / 100).toFixed(2)]);
@@ -510,6 +605,7 @@
     if (!confirm("Reset the game? This clears all trades, scores, and orders (players stay joined). Download your CSVs first!")) return;
     Promise.all([
       WX.gameRef(room, "trades").remove(),
+      WX.gameRef(room, "roundStarts").remove(),
       WX.gameRef(room, "market").transaction(m => {
         if (!m) return m;
         m.open = false; m.orders = {};

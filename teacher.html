@@ -106,11 +106,13 @@
       <!-- Chart + tables -->
       <div>
         <div class="card">
-          <h2>Transaction prices — convergence (instructor eyes only)</h2>
+          <h2>Convergence — average price of the k-th trade (instructor eyes only)</h2>
           <div class="chart-box"><canvas id="chart"></canvas></div>
           <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
-            Dashed line = theoretical equilibrium p* from current parameters.
-            Don’t project this view until the debrief.
+            Dot k averages the price of every trader&#8217;s k-th transaction that
+            round (each trade counts once for the buyer&#8217;s sequence and once for
+            the seller&#8217;s). Dashed line = theoretical equilibrium p* from current
+            parameters. Don&#8217;t project this view until the debrief.
           </p>
         </div>
 
@@ -121,6 +123,25 @@
             Each dot is a trade plotted at the moment it happened within its round.
             The vertical marker sweeps with the clock during a live round, so you
             can watch bursts and lulls as they occur.
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Price histogram — by round, vs. theory</h2>
+          <div class="chart-box"><canvas id="chart-hist-price"></canvas></div>
+          <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
+            Distribution of transaction prices each round (rounds overlap in
+            translucent color). Theory says trades should pile up at the dashed p*.
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Quantity histogram — widgets per trader, vs. theory</h2>
+          <div class="chart-box"><canvas id="chart-hist-qty"></canvas></div>
+          <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
+            How many widgets each trader moved in a round (a trade counts for both
+            its buyer and its seller). Dashed line = theoretical q* per trader.
+            Zero-trade bars are counted from the current roster.
           </p>
         </div>
 
@@ -174,7 +195,8 @@
 
   let room = null, meta = null, market = null, trades = [];
   let roundStarts = {};                       // {roundNumber: startTimestampMs}
-  let chart = null, timeChart = null, clockTimer = null, autoEndGuard = false;
+  let chart = null, timeChart = null, histPrice = null, histQty = null;
+  let clockTimer = null, autoEndGuard = false;
   let lastSweepPaint = 0;
 
   // ---------- setup ----------
@@ -226,7 +248,7 @@
     WX.gameRef(room, "market").on("value", s => {
       market = s.val() || {};
       syncParamInputsOnce();
-      renderKPIs(); renderStandings(); renderBook(); renderChart();
+      renderKPIs(); renderStandings(); renderBook(); renderChart(); renderHistograms();
     });
     WX.gameRef(room, "trades").on("value", s => {
       trades = [];
@@ -235,7 +257,7 @@
       // callback must be a block statement, not a bare expression.
       s.forEach(ch => { trades.push(Object.assign({ id: ch.key }, ch.val())); });
       trades.sort((x, y) => x.t - y.t);
-      renderKPIs(); renderChart(); renderTimeChart();
+      renderKPIs(); renderChart(); renderTimeChart(); renderHistograms();
     });
     WX.gameRef(room, "roundStarts").on("value", s => {
       roundStarts = s.val() || {};
@@ -478,18 +500,31 @@
   };
 
   function renderChart() {
-    const byRound = new Map();
-    trades.forEach((t, i) => {
-      if (!byRound.has(t.round)) byRound.set(t.round, []);
-      byRound.get(t.round).push({ x: i + 1, y: t.price / 100 });
-    });
-    const datasets = [...byRound.entries()].map(([rd, pts]) => ({
+    // Average price of each trader's k-th trade within a round. Every trade
+    // counts once in the buyer's sequence and once in the seller's, so dot k
+    // averages one price per trader who reached their k-th transaction.
+    const byRound = new Map();                  // round -> Map(k -> {sum, n})
+    const seq = new Map();                      // "round|name" -> trades so far
+    for (const t of trades) {                   // trades arrive time-sorted
+      if (!byRound.has(t.round)) byRound.set(t.round, new Map());
+      const m = byRound.get(t.round);
+      for (const who of [t.buyer, t.seller]) {
+        const key = t.round + "|" + who;
+        const k = (seq.get(key) || 0) + 1;
+        seq.set(key, k);
+        const cell = m.get(k) || { sum: 0, n: 0 };
+        cell.sum += t.price; cell.n += 1;
+        m.set(k, cell);
+      }
+    }
+    const datasets = [...byRound.entries()].sort((a, b) => a[0] - b[0]).map(([rd, m]) => ({
       label: "Round " + rd,
-      data: pts,
+      data: [...m.entries()].sort((a, b) => a[0] - b[0])
+        .map(([k, c]) => ({ x: k, y: c.sum / c.n / 100, n: c.n })),
       showLine: true,
       borderColor: ROUND_COLORS[(rd - 1) % ROUND_COLORS.length],
       backgroundColor: ROUND_COLORS[(rd - 1) % ROUND_COLORS.length],
-      pointRadius: 3.5, borderWidth: 1.5, tension: 0
+      pointRadius: 4, borderWidth: 1.5, tension: 0
     }));
     if (!chart) {
       chart = new Chart($("chart"), {
@@ -498,10 +533,17 @@
         options: {
           responsive: true, maintainAspectRatio: false, animation: false,
           scales: {
-            x: { title: { display: true, text: "Trade #" }, ticks: { precision: 0 } },
-            y: { title: { display: true, text: "Price ($)" } }
+            x: { title: { display: true, text: "Trader's k-th trade of the round" },
+                 ticks: { precision: 0, stepSize: 1 } },
+            y: { title: { display: true, text: "Average price ($)" } }
           },
-          plugins: { legend: { position: "bottom" } }
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: { callbacks: {
+              label: ctx => ctx.dataset.label + ": avg $" + ctx.parsed.y.toFixed(2) +
+                " across " + ctx.raw.n + " trader" + (ctx.raw.n === 1 ? "" : "s")
+            } }
+          }
         },
         plugins: [eqLinePlugin]
       });
@@ -576,6 +618,162 @@
       timeChart.data.datasets = datasets;
       timeChart.options.scales.x.suggestedMax = roundLen;
       timeChart.update("none");
+    }
+  }
+
+  // ---------- histograms (price & quantity, by round, vs. theory) ----------
+  // Pick a bin width (in cents) that yields roughly <= 11 bins.
+  function niceBinWidth(rangeCents) {
+    const steps = [5, 10, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000];
+    for (const s of steps) if (rangeCents / s <= 11) return s;
+    return 10000;
+  }
+
+  // Dashed vertical marker (used for p* on the price histogram, q* on the
+  // quantity histogram). `val` and `text` are functions so the line tracks
+  // live parameter shocks, same as eqLinePlugin.
+  function vLinePlugin(id, val, text) {
+    return {
+      id: id,
+      afterDatasetsDraw(c) {
+        const v = val();
+        if (v == null || !isFinite(v)) return;
+        const x = c.scales.x.getPixelForValue(v);
+        const { top, bottom, left, right } = c.chartArea;
+        if (!isFinite(x) || x < left || x > right) return;
+        const ctx = c.ctx;
+        ctx.save();
+        ctx.strokeStyle = "#16232b"; ctx.setLineDash([7, 6]); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = "600 11px 'IBM Plex Mono', monospace"; ctx.fillStyle = "#16232b";
+        const flip = x > (left + right) / 2;
+        ctx.textAlign = flip ? "right" : "left";
+        ctx.fillText(text(v), x + (flip ? -6 : 6), top + 12);
+        ctx.restore();
+      }
+    };
+  }
+  const pStarLine = vLinePlugin("pStarLine",
+    () => market && market.params ? WX.equilibrium(market.params).price / 100 : null,
+    v => "p* = $" + v.toFixed(2));
+  const qStarLine = vLinePlugin("qStarLine",
+    () => market && market.params ? WX.equilibrium(market.params).qtyPerPair : null,
+    v => "q* \u2248 " + v.toFixed(1));
+
+  function histDataset(rd, data) {
+    const col = ROUND_COLORS[(rd - 1) % ROUND_COLORS.length];
+    return {
+      label: "Round " + rd, data: data,
+      backgroundColor: col + "59",              // translucent so rounds overlay
+      borderColor: col, borderWidth: 1.5,
+      grouped: false, barPercentage: 0.95, categoryPercentage: 0.95
+    };
+  }
+
+  let lastBinW = 50;                            // cents; for tooltip bin ranges
+  function renderHistograms() {
+    const rounds = [...new Set(trades.map(t => t.round))].sort((a, b) => a - b);
+    const eq = market && market.params ? WX.equilibrium(market.params) : null;
+
+    // ----- prices: shared bins across rounds so the colors line up
+    let pMin = Infinity, pMax = -Infinity;
+    for (const t of trades) { pMin = Math.min(pMin, t.price); pMax = Math.max(pMax, t.price); }
+    if (eq && isFinite(pMin)) { pMin = Math.min(pMin, eq.price); pMax = Math.max(pMax, eq.price); }
+    let priceDatasets = [], pxMin = 0, pxMax = 1;
+    if (isFinite(pMin)) {
+      const w = niceBinWidth(Math.max(pMax - pMin, 1));
+      lastBinW = w;
+      const start = Math.floor(pMin / w) * w;
+      const nBins = Math.floor((pMax - start) / w) + 1;
+      priceDatasets = rounds.map(rd => {
+        const counts = new Array(nBins).fill(0);
+        for (const t of trades) {
+          if (t.round !== rd) continue;
+          counts[Math.min(nBins - 1, Math.floor((t.price - start) / w))] += 1;
+        }
+        return histDataset(rd, counts.map((y, i) => ({ x: (start + (i + 0.5) * w) / 100, y: y })));
+      });
+      pxMin = (start - 0.35 * w) / 100;
+      pxMax = (start + (nBins + 0.35) * w) / 100;
+    }
+    if (!histPrice) {
+      histPrice = new Chart($("chart-hist-price"), {
+        type: "bar",
+        data: { datasets: priceDatasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          scales: {
+            x: { type: "linear", min: pxMin, max: pxMax,
+                 title: { display: true, text: "Transaction price ($)" } },
+            y: { beginAtZero: true, ticks: { precision: 0 },
+                 title: { display: true, text: "Number of trades" } }
+          },
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: { callbacks: {
+              title: items => {
+                const c = items[0].parsed.x * 100;
+                return WX.fmt(Math.round(c - lastBinW / 2)) + " \u2013 " +
+                       WX.fmt(Math.round(c + lastBinW / 2));
+              }
+            } }
+          }
+        },
+        plugins: [pStarLine]
+      });
+    } else {
+      histPrice.data.datasets = priceDatasets;
+      histPrice.options.scales.x.min = pxMin;
+      histPrice.options.scales.x.max = pxMax;
+      histPrice.update("none");
+    }
+
+    // ----- quantities: widgets moved per trader per round (0 included)
+    const qByRound = new Map();                 // round -> Map(name -> q)
+    for (const t of trades) {
+      if (!qByRound.has(t.round)) qByRound.set(t.round, new Map());
+      const m = qByRound.get(t.round);
+      m.set(t.buyer, (m.get(t.buyer) || 0) + 1);
+      m.set(t.seller, (m.get(t.seller) || 0) + 1);
+    }
+    let maxQ = eq ? Math.ceil(eq.qtyPerPair) : 1;
+    for (const m of qByRound.values()) for (const v of m.values()) maxQ = Math.max(maxQ, v);
+    const roster = market && market.players ? Object.keys(market.players) : [];
+    const qtyDatasets = rounds.map(rd => {
+      const m = qByRound.get(rd) || new Map();
+      const names = new Set(roster.concat([...m.keys()]));
+      const counts = new Array(maxQ + 1).fill(0);
+      for (const n of names) counts[Math.min(maxQ, m.get(n) || 0)] += 1;
+      return histDataset(rd, counts.map((y, q) => ({ x: q, y: y })));
+    });
+    if (!histQty) {
+      histQty = new Chart($("chart-hist-qty"), {
+        type: "bar",
+        data: { datasets: qtyDatasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          scales: {
+            x: { type: "linear", min: -0.6, max: maxQ + 0.6,
+                 ticks: { stepSize: 1, precision: 0 },
+                 title: { display: true, text: "Widgets traded by a player in the round" } },
+            y: { beginAtZero: true, ticks: { precision: 0 },
+                 title: { display: true, text: "Number of traders" } }
+          },
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: { callbacks: {
+              title: items => items[0].parsed.x + " widget" +
+                (items[0].parsed.x === 1 ? "" : "s") + " traded"
+            } }
+          }
+        },
+        plugins: [qStarLine]
+      });
+    } else {
+      histQty.data.datasets = qtyDatasets;
+      histQty.options.scales.x.max = maxQ + 0.6;
+      histQty.update("none");
     }
   }
 

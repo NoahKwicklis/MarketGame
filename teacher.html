@@ -221,7 +221,7 @@
   // real security. The page source is public and the database itself is
   // writable by anyone with the room code (see SETUP.md, step 2).
   const TEACH_PASS_SHA256 =
-    "55123aeba219e9d8381b3f9677c7debf7530d89b879c6accdcfa6da0a3a7d649";
+    "d5bfbabea02db8fc22a7e6f7743c4702b0311008efeb6458557e6f0b7f4a8a94";
 
   function sha256Hex(str) {
     return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str))
@@ -362,6 +362,11 @@
     }
     if (ms <= 0 && !autoEndGuard) { autoEndGuard = true; endRound().finally(() => { autoEndGuard = false; }); }
   }
+  // Background tabs get their timers throttled or suspended, which can leave
+  // an expired round stuck in "running". Catch up the instant we're visible.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && meta) tick();
+  });
 
   // ---------- round controls ----------
   $("btn-start").addEventListener("click", startRound);

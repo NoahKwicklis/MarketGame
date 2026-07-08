@@ -123,7 +123,8 @@
       <div id="pchart-note" class="empty-note">The plot fills in once orders and trades happen this round.</div>
       <p class="muted" style="font-size:0.8rem;margin:6px 0 0">
         Dots are executed trades. The gap between the green (highest bid) and red
-        (lowest ask) lines is the bid–ask spread.
+        (lowest ask) lines is the bid–ask spread — watch it tighten as the market
+        finds its price.
       </p>
     </div>
     <footer class="credit">Widget Exchange · a classroom double-auction experiment</footer>
@@ -266,15 +267,25 @@
               WX.serverNow() < (meta.roundEndsAt || 0));
   }
 
+  // The clock has run out but the phase in the database still says
+  // "running" — the instructor's console flips the phase, and it may be
+  // throttled or asleep. Display-wise, treat this as the round being over.
+  function roundTimeUp() {
+    return !!(meta && meta.phase === "running" && meta.roundEndsAt &&
+              WX.serverNow() >= meta.roundEndsAt);
+  }
+
   function renderMeta() {
     if (!meta) return;
     $("t-round").textContent = (meta.round || 0) + " / " + (meta.totalRounds || "—");
     const b = $("banner");
-    const phase = meta.phase || "lobby";
-    b.className = "banner " + phase;
+    let phase = meta.phase || "lobby";
+    if (phase === "running" && roundTimeUp()) phase = "timeup";
+    b.className = "banner " + (phase === "timeup" ? "between" : phase);
     b.textContent = {
       lobby: "Waiting for your instructor to start round 1…",
       running: "Market open — trade!",
+      timeup: "Time\u2019s up — round " + (meta.round || "") + " is closed. Waiting for your instructor…",
       paused: "Market paused by your instructor. Hold tight.",
       between: "Round " + (meta.round || "") + " is over. Waiting for the next round…",
       ended: "The game has ended. Final scores are locked in."
@@ -283,7 +294,12 @@
     renderPriceChart();
   }
 
+  let lastTimeUp = false;
   function renderClock() {
+    // The banner and order form key off "has time expired?", which changes
+    // between database updates — refresh them the moment it flips.
+    const up = roundTimeUp();
+    if (up !== lastTimeUp) { lastTimeUp = up; renderMeta(); }
     const el = $("t-clock");
     if (!meta || meta.phase !== "running" || !meta.roundEndsAt) {
       el.textContent = meta && meta.phase === "paused" ? "PAUSED" : "—:—";

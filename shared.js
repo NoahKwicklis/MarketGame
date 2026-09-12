@@ -13,7 +13,7 @@
                players: { NAME: {role, q, score, joinedAt} },
                orders:  { NAME: {side, price, ts} } }
      trades: pushId -> { round, buyer, seller, price,
-                         buyerMU, sellerMC, buyerGain,
+                         buyerMWP, sellerMC, buyerGain,
                          sellerGain, t }                    // cents
    The matching engine runs inside Firebase transactions on the
    /market node, so two students crossing the same resting order
@@ -47,8 +47,8 @@
     return Math.round(lo + u * (hi - lo));
   }
 
-  // Marginal utility of a buyer's NEXT unit, having bought q already.
-  function muNext(params, q, u) {
+  // Marginal willingness to pay for a buyer's NEXT unit, having bought q already.
+  function mwpNext(params, q, u) {
     return params.a + shiftA(params, u) - params.b * (q + 1);
   }
   // Marginal cost of a seller's NEXT unit, having sold q already.
@@ -85,7 +85,7 @@
     const values = [];
     for (const p of buyers) {
       for (let k = 0; k < MAX_UNITS; k++) {
-        const v = muNext(params, k, p.u);
+        const v = mwpNext(params, k, p.u);
         if (v <= 0) break;                                 // free disposal
         values.push(v);
       }
@@ -308,9 +308,9 @@
       const seller = market.players[sellerName];
       const p = market.params;
 
-      const bMU = muNext(p, buyer.q, buyer.u);
+      const bMWP = mwpNext(p, buyer.q, buyer.u);
       const sMC = mcNext(p, seller.q, seller.u);
-      buyer.q += 1; buyer.score += (bMU - tradePrice);
+      buyer.q += 1; buyer.score += (bMWP - tradePrice);
       seller.q += 1; seller.score += (tradePrice - sMC);
 
       delete market.orders[bestName];        // resting order consumed
@@ -319,8 +319,8 @@
       out.status = "traded";
       out.trade = {
         buyer: buyerName, seller: sellerName, price: tradePrice,
-        buyerMU: bMU, sellerMC: sMC,
-        buyerGain: bMU - tradePrice, sellerGain: tradePrice - sMC
+        buyerMWP: bMWP, sellerMC: sMC,
+        buyerGain: bMWP - tradePrice, sellerGain: tradePrice - sMC
       };
     } else {
       // Rest in the book, replacing this player's previous order.
@@ -420,7 +420,7 @@
   }
 
   global.WX = {
-    muNext, mcNext, shiftA, shiftC, schedules, equilibrium, closedForm, redrawTypes,
+    mwpNext, mcNext, shiftA, shiftC, schedules, equilibrium, closedForm, redrawTypes,
     toCents, fmt,
     nameProblem, cleanRoom, randomRoom, ROOM_RE,
     initFirebase, serverNow, gameRef,

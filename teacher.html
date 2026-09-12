@@ -64,7 +64,6 @@
       <div class="kpi"><div class="k">Trades (round)</div><div class="v" id="k-trades">0</div></div>
       <div class="kpi"><div class="k">Last price</div><div class="v" id="k-last">—</div></div>
       <div class="kpi"><div class="k">Avg price (round)</div><div class="v" id="k-avg">—</div></div>
-      <div class="kpi"><div class="k">Theoretical p*</div><div class="v" id="k-eqp">—</div></div>
       <div class="kpi"><div class="k">p* band</div><div class="v" id="k-eqband">—</div></div>
       <div class="kpi"><div class="k">q* total / per trader</div><div class="v" id="k-eqq">—</div></div>
       <div class="kpi"><div class="k">Max surplus (round)</div><div class="v" id="k-eqs">—</div></div>
@@ -112,7 +111,7 @@
         <div class="card">
           <h2>Market parameters</h2>
           <p class="muted" style="font-size:0.84rem;margin:0 0 4px">
-            Buyer <em>i</em>: MU = (a + α<sub>i</sub>) − b·Q &nbsp;·&nbsp;
+            Buyer <em>i</em>: MWP = (a + α<sub>i</sub>) − b·Q &nbsp;·&nbsp;
             Seller <em>j</em>: MC = (c + γ<sub>j</sub>) + d·Q.
             Applying mid-round is a live shock — new trades use the new schedule instantly.
           </p>
@@ -635,16 +634,20 @@
       ? WX.fmt(Math.round(roundTrades.reduce((s, t) => s + t.price, 0) / roundTrades.length)) : "—";
     if (market && market.params) {
       const eq = WX.equilibrium(market.params, market.players);
-      $("k-eqp").textContent = WX.fmt(Math.round(eq.price)) + (eq.exact ? "" : "*");
       if (!eq.exact) {
-        $("k-eqband").textContent = "no roster";
+        // No roster yet: all we have is the representative-agent closed form.
+        // Flag it with an asterisk so it isn't mistaken for a real prediction.
+        $("k-eqband").textContent = WX.fmt(Math.round(eq.price)) + "*";
         $("k-eqq").textContent = "—";
         $("k-eqs").textContent = "—";
       } else {
-        // A wide band means many marginal units are tied at the same value —
-        // widen the intercept bounds to sharpen the prediction.
+        // The band is the whole price readout now. When it collapses to a
+        // single cent there is no range to show, so print the point instead —
+        // a lone "exact" with no number would say nothing useful. A wide band
+        // means many marginal units are tied; widen the intercept bounds.
         $("k-eqband").textContent = eq.band <= 0
-          ? "exact" : WX.fmt(Math.round(eq.pLo)) + "–" + WX.fmt(Math.round(eq.pHi));
+          ? WX.fmt(Math.round(eq.price))
+          : WX.fmt(Math.round(eq.pLo)) + "\u2013" + WX.fmt(Math.round(eq.pHi));
         // A tied range means marginal units are exactly break-even and it is
         // arbitrary which of them trade — the quantity twin of a wide price band.
         $("k-eqq").textContent = (eq.qTied > 0 ? eq.qMin + "\u2013" + eq.qTotal : String(eq.qTotal)) +
@@ -1171,15 +1174,21 @@
     }
   }
 
+  // Trades written before the MU -> MWP rename carry the old key. Read both
+  // so a room that spans the rename still exports cleanly.
+  function buyerMWPOf(t) {
+    return t.buyerMWP != null ? t.buyerMWP : t.buyerMU;
+  }
+
   // ---------- CSV ----------
   $("btn-csv-trades").addEventListener("click", () => {
     const rows = [["timestamp_utc", "round", "seconds_into_round", "buyer", "seller", "price",
-      "buyer_marginal_utility", "seller_marginal_cost", "buyer_surplus", "seller_surplus", "total_surplus"]];
+      "buyer_marginal_willingness_to_pay", "seller_marginal_cost", "buyer_surplus", "seller_surplus", "total_surplus"]];
     for (const t of trades) {
       const t0 = t0For(t.round);
       const secs = t0 ? ((t.t - t0) / 1000).toFixed(1) : "";
       rows.push([new Date(t.t).toISOString(), t.round, secs, t.buyer, t.seller,
-        (t.price / 100).toFixed(2), (t.buyerMU / 100).toFixed(2), (t.sellerMC / 100).toFixed(2),
+        (t.price / 100).toFixed(2), (buyerMWPOf(t) / 100).toFixed(2), (t.sellerMC / 100).toFixed(2),
         (t.buyerGain / 100).toFixed(2), (t.sellerGain / 100).toFixed(2),
         ((t.buyerGain + t.sellerGain) / 100).toFixed(2)]);
     }

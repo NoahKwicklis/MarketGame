@@ -1,7 +1,7 @@
 # Widget Exchange — Setup Guide
 
 A live double-auction market game for principles of economics. Students are
-buyers (marginal utility `MU = (a + αᵢ) − b·Q`) or sellers (marginal cost
+buyers (marginal willingness to pay `MWP = (a + αᵢ) − b·Q`) or sellers (marginal cost
 `MC = (c + γⱼ) + d·Q`), trade one widget at a time in a shared order book, and
 accumulate surplus as their score. Each trader draws their own intercept
 shift from a uniform distribution whose bounds you set, so no two buyers
@@ -140,7 +140,7 @@ it after every refresh.
    parameters. Defaults are `a=12, b=1, c=2, d=1` with intercept shifts
    drawn from U[−$1.50, +$1.50] on both sides, 5-minute rounds, 3 rounds
    — equilibrium near **p\* = $7**, about **5 trades per student** per
-   round. The console shows p\*, its band, q\*, and maximum surplus live,
+   round. The console shows the p\* band, q\*, and maximum surplus live,
    recomputed from the actual roster; students never see any of it.
 
    **Trader heterogeneity.** The four α/γ bound fields control the spread.
@@ -172,7 +172,7 @@ it after every refresh.
 5. **Between rounds:** quantities reset (so marginal values reset) but
    scores accumulate across rounds. Pause/Resume works mid-round.
 6. **After class:** download the **trades CSV** (timestamp, round, buyer,
-   seller, price, each side's MU/MC and surplus) and the **standings CSV**,
+   seller, price, each side's MWP/MC and surplus) and the **standings CSV**,
    then project the convergence chart for the debrief.
 7. **Two ways to start over:** **Reset game** clears trades, scores, and
    orders but keeps everyone joined (good between activities in the same

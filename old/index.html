@@ -327,20 +327,15 @@
     $("my-q-label").textContent = isBuyer ? "Widgets bought this round" : "Widgets sold this round";
     $("my-q").textContent = me.q;
     const p = market.params;
-    const mv = isBuyer ? WX.muNext(p, me.q, me.u) : WX.mcNext(p, me.q, me.u);
+    const mv = isBuyer ? WX.muNext(p, me.q) : WX.mcNext(p, me.q);
     $("my-mv-label").textContent = isBuyer
       ? "Marginal utility of your next widget"
       : "Marginal cost of your next widget";
     $("my-mv").textContent = WX.fmt(mv);
     $("my-mv").style.color = isBuyer ? "var(--bid)" : "var(--ask)";
-    // Intercepts are drawn per trader, so quote this student their OWN
-    // schedule — the population parameters would be misleading.
-    const myIntercept = isBuyer ? p.a + WX.shiftA(p, me.u) : p.c + WX.shiftC(p, me.u);
     $("my-formula").textContent = isBuyer
-      ? "Your value schedule: MU = " + WX.fmt(myIntercept) + " − " + WX.fmt(p.b) +
-        " × Q. Profit per purchase = MU − price paid. Your intercept is your own draw — other buyers have different ones."
-      : "Your cost schedule: MC = " + WX.fmt(myIntercept) + " + " + WX.fmt(p.d) +
-        " × Q. Profit per sale = price received − MC. Your intercept is your own draw — other sellers have different ones.";
+      ? "Your value schedule: MU = " + WX.fmt(p.a) + " − " + WX.fmt(p.b) + " × Q. Profit per purchase = MU − price paid."
+      : "Your cost schedule: MC = " + WX.fmt(p.c) + " + " + WX.fmt(p.d) + " × Q. Profit per sale = price received − MC.";
 
     // order form skin
     $("order-title").textContent = isBuyer ? "Post your bid" : "Post your ask";

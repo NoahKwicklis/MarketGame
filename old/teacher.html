@@ -65,32 +65,7 @@
       <div class="kpi"><div class="k">Last price</div><div class="v" id="k-last">—</div></div>
       <div class="kpi"><div class="k">Avg price (round)</div><div class="v" id="k-avg">—</div></div>
       <div class="kpi"><div class="k">Theoretical p*</div><div class="v" id="k-eqp">—</div></div>
-      <div class="kpi"><div class="k">p* band</div><div class="v" id="k-eqband">—</div></div>
-      <div class="kpi"><div class="k">Q* total / per trader</div><div class="v" id="k-eqq">—</div></div>
-      <div class="kpi"><div class="k">Max surplus (round)</div><div class="v" id="k-eqs">—</div></div>
-    </div>
-
-    <div class="chart-pair">
-      <div class="card">
-        <h2>Aggregate demand &amp; supply — from the live roster</h2>
-        <div class="chart-box"><canvas id="chart-agg"></canvas></div>
-        <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
-          Every buyer&#8217;s units pooled and sorted high-to-low, every seller&#8217;s
-          pooled and sorted low-to-high &#8212; the horizontal sum of the individual
-          schedules. Where the staircases cross is p* and Q*.
-        </p>
-      </div>
-
-      <div class="card">
-        <h2>Transaction prices in sequence — by round</h2>
-        <div class="chart-box"><canvas id="chart-seq"></canvas></div>
-        <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
-          The n-th trade of each round at the price it executed, out to the last
-          trade that round. Horizontal dashed line = p*; vertical dashed line =
-          predicted Q*, so trades falling to its right mean the market moved more
-          units than theory says it should.
-        </p>
-      </div>
+      <div class="kpi"><div class="k">q* per trader</div><div class="v" id="k-eqq">—</div></div>
     </div>
 
     <div class="grid-2">
@@ -109,8 +84,7 @@
         <div class="card">
           <h2>Market parameters</h2>
           <p class="muted" style="font-size:0.84rem;margin:0 0 4px">
-            Buyer <em>i</em>: MU = (a + α<sub>i</sub>) − b·Q &nbsp;·&nbsp;
-            Seller <em>j</em>: MC = (c + γ<sub>j</sub>) + d·Q.
+            Buyers: MU = a − b·Q &nbsp;·&nbsp; Sellers: MC = c + d·Q.
             Applying mid-round is a live shock — new trades use the new schedule instantly.
           </p>
           <div class="param-grid">
@@ -127,24 +101,7 @@
             <div><label for="p-t">T — number of rounds</label>
               <input id="p-t" type="number" step="1" min="1"></div>
           </div>
-          <p class="muted" style="font-size:0.84rem;margin:12px 0 0">
-            <strong>Trader heterogeneity.</strong> Each buyer draws
-            α<sub>i</sub> ~ U[α<sub>min</sub>, α<sub>max</sub>] and each seller
-            draws γ<sub>j</sub> ~ U[γ<sub>min</sub>, γ<sub>max</sub>], once, on
-            joining. Set all four to 0 for an identical-traders market.
-          </p>
-          <div class="param-grid">
-            <div><label for="p-alo">α<sub>min</sub> — buyer shift, low ($)</label>
-              <input id="p-alo" type="number" step="0.01"></div>
-            <div><label for="p-ahi">α<sub>max</sub> — buyer shift, high ($)</label>
-              <input id="p-ahi" type="number" step="0.01"></div>
-            <div><label for="p-clo">γ<sub>min</sub> — seller shift, low ($)</label>
-              <input id="p-clo" type="number" step="0.01"></div>
-            <div><label for="p-chi">γ<sub>max</sub> — seller shift, high ($)</label>
-              <input id="p-chi" type="number" step="0.01"></div>
-          </div>
           <button id="btn-params" class="btn">Apply parameters</button>
-          <button id="btn-redraw" class="btn ghost">Redraw trader types (market must be closed)</button>
           <div id="param-note" class="err ok" role="status"></div>
         </div>
 
@@ -211,8 +168,8 @@
         <div class="card">
           <h2>Standings</h2>
           <table aria-label="Standings"><thead>
-            <tr><th>#</th><th>Trader</th><th>Role</th><th class="num">Intercept</th>
-                <th class="num">Q (rd)</th><th class="num">Score</th><th></th></tr>
+            <tr><th>#</th><th>Trader</th><th>Role</th><th class="num">Q (rd)</th>
+                <th class="num">Score</th><th></th></tr>
           </thead><tbody id="stand-body"></tbody></table>
           <div id="stand-empty" class="empty-note">No one has joined yet. Share the room code!</div>
           <p class="muted" style="font-size:0.8rem;margin-top:6px">
@@ -299,20 +256,12 @@
     }
   } catch (e) {}
 
-  // Defaults for a clean classroom market: p* near $7, about 5 units per
-  // trader. The ±$1.50 intercept bounds spread 12 identical buyers' marginal
-  // values across the gaps between the $1.00 slope steps, so the aggregate
-  // schedules become fine staircases with a unique marginal unit instead of
-  // 12-unit-wide flats.
-  const DEFAULTS = {
-    a: 12, b: 1, c: 2, d: 1, minutes: 5, rounds: 3,
-    aLo: -1.5, aHi: 1.5, cLo: -1.5, cHi: 1.5
-  };
+  // Defaults for a clean classroom market: p* = $7, q* = 5 per trader.
+  const DEFAULTS = { a: 12, b: 1, c: 2, d: 1, minutes: 5, rounds: 3 };
 
   let room = null, meta = null, market = null, trades = [];
   let roundStarts = {};                       // {roundNumber: startTimestampMs}
   let chart = null, timeChart = null, histPrice = null, histQty = null;
-  let aggChart = null, seqChart = null;
   let clockTimer = null, autoEndGuard = false;
   let lastSweepPaint = 0;
 
@@ -335,9 +284,7 @@
       if (snap.exists()) return;               // reconnect to existing game
       const params = {
         a: WX.toCents(DEFAULTS.a), b: WX.toCents(DEFAULTS.b),
-        c: WX.toCents(DEFAULTS.c), d: WX.toCents(DEFAULTS.d),
-        aLo: WX.toCents(DEFAULTS.aLo), aHi: WX.toCents(DEFAULTS.aHi),
-        cLo: WX.toCents(DEFAULTS.cLo), cHi: WX.toCents(DEFAULTS.cHi)
+        c: WX.toCents(DEFAULTS.c), d: WX.toCents(DEFAULTS.d)
       };
       return WX.gameRef(room).set({
         meta: {
@@ -368,7 +315,6 @@
       market = s.val() || {};
       syncParamInputsOnce();
       renderKPIs(); renderStandings(); renderBook(); renderChart(); renderHistograms();
-      renderAggChart(); renderSeqChart();
     });
     WX.gameRef(room, "trades").on("value", s => {
       trades = [];
@@ -378,7 +324,6 @@
       s.forEach(ch => { trades.push(Object.assign({ id: ch.key }, ch.val())); });
       trades.sort((x, y) => x.t - y.t);
       renderKPIs(); renderChart(); renderTimeChart(); renderHistograms();
-      renderAggChart(); renderSeqChart();
     });
     WX.gameRef(room, "roundStarts").on("value", s => {
       roundStarts = s.val() || {};
@@ -396,12 +341,6 @@
     $("p-b").value = (market.params.b / 100);
     $("p-c").value = (market.params.c / 100);
     $("p-d").value = (market.params.d / 100);
-    // Games created before intercept draws existed have no bounds stored;
-    // show 0 rather than blank so Apply doesn't fail validation.
-    $("p-alo").value = ((market.params.aLo || 0) / 100);
-    $("p-ahi").value = ((market.params.aHi || 0) / 100);
-    $("p-clo").value = ((market.params.cLo || 0) / 100);
-    $("p-chi").value = ((market.params.cHi || 0) / 100);
     $("p-m").value = (meta.roundSeconds || 300) / 60;
     $("p-t").value = meta.totalRounds || 3;
   }
@@ -492,56 +431,21 @@
     const a = parseFloat($("p-a").value), b = parseFloat($("p-b").value);
     const c = parseFloat($("p-c").value), d = parseFloat($("p-d").value);
     const m = parseFloat($("p-m").value), t = parseInt($("p-t").value, 10);
-    const aLo = parseFloat($("p-alo").value), aHi = parseFloat($("p-ahi").value);
-    const cLo = parseFloat($("p-clo").value), cHi = parseFloat($("p-chi").value);
     if ([a, b, c, d, m].some(x => !isFinite(x) || x < 0) || b <= 0 || d <= 0 || !t || t < 1) {
       note.classList.remove("ok"); note.textContent = "Check the numbers: b, d, M, T must be positive."; return;
     }
-    if ([aLo, aHi, cLo, cHi].some(x => !isFinite(x))) {
-      note.classList.remove("ok"); note.textContent = "Intercept bounds must be numbers (use 0 for no heterogeneity)."; return;
+    if (a <= c) {
+      note.classList.remove("ok"); note.textContent = "a must exceed c or no trades are profitable."; return;
     }
-    if (aHi < aLo || cHi < cLo) {
-      note.classList.remove("ok"); note.textContent = "Each shift range needs low \u2264 high."; return;
-    }
-    // The luckiest buyer must beat the unluckiest seller, or nobody trades.
-    if (a + aHi <= c + cLo) {
-      note.classList.remove("ok");
-      note.textContent = "a + \u03B1max must exceed c + \u03B3min or no trade is profitable for anyone."; return;
-    }
-    if (a + aLo <= c + cHi) {
-      note.classList.add("ok");
-      note.textContent = "Note: with these bounds the weakest buyer cannot profitably trade with the weakest seller \u2014 some traders may sit out. Applying anyway\u2026";
-    }
-    const params = {
-      a: WX.toCents(a), b: WX.toCents(b), c: WX.toCents(c), d: WX.toCents(d),
-      aLo: WX.toCents(aLo), aHi: WX.toCents(aHi),
-      cLo: WX.toCents(cLo), cHi: WX.toCents(cHi)
-    };
+    const params = { a: WX.toCents(a), b: WX.toCents(b), c: WX.toCents(c), d: WX.toCents(d) };
     Promise.all([
       WX.gameRef(room, "market/params").set(params),
       WX.gameRef(room, "meta").update({ roundSeconds: Math.round(m * 60), totalRounds: t })
     ]).then(() => {
       note.classList.add("ok");
-      const eq = WX.equilibrium(params, market ? market.players : null);
-      note.textContent = eq.exact
-        ? "Applied. p* = " + WX.fmt(Math.round(eq.price)) +
-          " (band " + WX.fmt(Math.round(eq.pLo)) + "\u2013" + WX.fmt(Math.round(eq.pHi)) +
-          "), Q* = " + eq.qTotal + " units across " + (eq.nBuyers + eq.nSellers) + " traders."
-        : "Applied. No traders yet \u2014 p* will be computed from the roster as students join.";
-    });
-  });
-
-  // ---------- redraw trader types ----------
-  $("btn-redraw").addEventListener("click", () => {
-    const note = $("param-note"); note.textContent = "";
-    if (market && market.open) {
-      note.classList.remove("ok");
-      note.textContent = "Close the market first \u2014 redrawing mid-round would change schedules under students' feet."; return;
-    }
-    if (!confirm("Re-roll every trader's intercept draw? Scores and trades are kept, but every schedule changes. Download your CSVs first if the old draws matter.")) return;
-    WX.redrawTypes(room).then(() => {
-      note.classList.add("ok");
-      note.textContent = "New draws issued. Every trader's schedule has changed.";
+      const eq = WX.equilibrium(params);
+      note.textContent = "Applied. New p* = " + WX.fmt(Math.round(eq.price)) +
+        ", q* \u2248 " + eq.qtyPerPair.toFixed(1) + " per trader.";
     });
   });
 
@@ -555,15 +459,7 @@
     players.forEach(([name, p], i) => {
       const tr = document.createElement("tr");
       const c = (txt, cls) => { const td = document.createElement("td"); td.textContent = txt; if (cls) td.className = cls; return td; };
-      // Each trader's drawn intercept: a + alpha for buyers, c + gamma for
-      // sellers. This is private to the student; it is shown here so you can
-      // see the realized spread and spot a lopsided draw before the round.
-      const prm = market.params || {};
-      const intercept = p.role === "buyer"
-        ? prm.a + WX.shiftA(prm, p.u)
-        : prm.c + WX.shiftC(prm, p.u);
-      tr.append(c(i + 1), c(name), c(p.role), c(WX.fmt(intercept), "num"),
-        c(p.q, "num"), c(WX.fmt(p.score), "num"));
+      tr.append(c(i + 1), c(name), c(p.role), c(p.q, "num"), c(WX.fmt(p.score), "num"));
       const tdBtn = document.createElement("td");
       if (closed) {
         const sw = document.createElement("button");
@@ -631,23 +527,9 @@
     $("k-avg").textContent = roundTrades.length
       ? WX.fmt(Math.round(roundTrades.reduce((s, t) => s + t.price, 0) / roundTrades.length)) : "—";
     if (market && market.params) {
-      const eq = WX.equilibrium(market.params, market.players);
-      $("k-eqp").textContent = WX.fmt(Math.round(eq.price)) + (eq.exact ? "" : "*");
-      if (!eq.exact) {
-        $("k-eqband").textContent = "no roster";
-        $("k-eqq").textContent = "—";
-        $("k-eqs").textContent = "—";
-      } else {
-        // A wide band means many marginal units are tied at the same value —
-        // widen the intercept bounds to sharpen the prediction.
-        $("k-eqband").textContent = eq.band <= 0
-          ? "exact" : WX.fmt(Math.round(eq.pLo)) + "–" + WX.fmt(Math.round(eq.pHi));
-        // A tied range means marginal units are exactly break-even and it is
-        // arbitrary which of them trade — the quantity twin of a wide price band.
-        $("k-eqq").textContent = (eq.qTied > 0 ? eq.qMin + "\u2013" + eq.qTotal : String(eq.qTotal)) +
-          " / " + eq.qtyPerPair.toFixed(1);
-        $("k-eqs").textContent = WX.fmt(Math.round(eq.maxSurplus));
-      }
+      const eq = WX.equilibrium(market.params);
+      $("k-eqp").textContent = WX.fmt(Math.round(eq.price));
+      $("k-eqq").textContent = eq.qtyPerPair.toFixed(1);
     }
   }
 
@@ -673,7 +555,7 @@
     id: "eqLine",
     afterDatasetsDraw(c) {
       if (!market || !market.params) return;
-      const eq = WX.equilibrium(market.params, market.players).price / 100;
+      const eq = WX.equilibrium(market.params).price / 100;
       const y = c.scales.y.getPixelForValue(eq);
       if (!isFinite(y)) return;
       const { left, right } = c.chartArea;
@@ -687,180 +569,6 @@
       ctx.restore();
     }
   };
-
-  // Vertical dashed rule at the predicted quantity, labelled underneath the
-  // line. The label sits just inside the plot floor rather than below the
-  // axis, so it never collides with the tick labels or the axis title.
-  function qStarRulePlugin(id) {
-    return {
-      id: id,
-      afterDatasetsDraw(c) {
-        if (!market || !market.params) return;
-        const eq = WX.equilibrium(market.params, market.players);
-        if (!eq.exact || !eq.qTotal) return;
-        const x = c.scales.x.getPixelForValue(eq.qTotal);
-        const { top, bottom, left, right } = c.chartArea;
-        if (!isFinite(x) || x < left || x > right) return;
-        const ctx = c.ctx;
-        ctx.save();
-        ctx.strokeStyle = "#1e4e5f"; ctx.lineWidth = 1.5; ctx.setLineDash([5, 5]);
-        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
-        ctx.setLineDash([]);
-        const txt = eq.qTied > 0
-          ? "Q* = " + eq.qMin + "\u2013" + eq.qTotal
-          : "Q* = " + eq.qTotal;
-        ctx.font = "600 11px 'IBM Plex Mono', monospace";
-        const w = ctx.measureText(txt).width;
-        const cx = Math.min(Math.max(x, left + w / 2 + 4), right - w / 2 - 4);
-        // White plate so the label stays legible over gridlines and dots.
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(cx - w / 2 - 4, bottom - 20, w + 8, 16);
-        ctx.fillStyle = "#1e4e5f";
-        ctx.textAlign = "center"; ctx.textBaseline = "top";
-        ctx.fillText(txt, cx, bottom - 18);
-        ctx.restore();
-      }
-    };
-  }
-
-  // How many units of the aggregate schedules to draw: enough past the
-  // crossing that the intersection sits centrally rather than at the edge.
-  function aggSpan(eq, sch) {
-    const longest = Math.max(sch.values.length, sch.costs.length);
-    const want = eq.qTotal ? Math.ceil(eq.qTotal * 1.5) : 24;
-    return Math.max(12, Math.min(longest, want));
-  }
-
-  // Both headline charts share a price axis so they read as a matched pair:
-  // the left one shows where theory says prices should land, the right one
-  // shows where they actually landed, on the same vertical scale.
-  function sharedPriceRange() {
-    let lo = Infinity, hi = -Infinity;
-    const bump = v => { if (isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } };
-    if (market && market.params) {
-      const eq = WX.equilibrium(market.params, market.players);
-      bump(eq.price / 100);
-      const sch = WX.schedules(market.params, market.players);
-      const n = aggSpan(eq, sch);
-      if (sch.values.length) {
-        bump(sch.values[0] / 100);
-        bump(sch.values[Math.min(n, sch.values.length) - 1] / 100);
-      }
-      if (sch.costs.length) {
-        bump(sch.costs[0] / 100);
-        bump(sch.costs[Math.min(n, sch.costs.length) - 1] / 100);
-      }
-    }
-    for (const t of trades) bump(t.price / 100);
-    if (!isFinite(lo)) return {};
-    const pad = Math.max((hi - lo) * 0.06, 0.25);
-    return { min: Math.max(0, lo - pad), max: hi + pad };
-  }
-
-  function renderAggChart() {
-    if (!market || !market.params) return;
-    const eq = WX.equilibrium(market.params, market.players);
-    const sch = WX.schedules(market.params, market.players);
-    const n = aggSpan(eq, sch);
-    const dem = [], sup = [];
-    for (let i = 0; i < n; i++) {
-      if (i < sch.values.length) dem.push({ x: i + 1, y: sch.values[i] / 100 });
-      if (i < sch.costs.length) sup.push({ x: i + 1, y: sch.costs[i] / 100 });
-    }
-    const datasets = [
-      { label: "Aggregate demand", data: dem, borderColor: "#0b7a55",
-        borderWidth: 2, stepped: true, pointRadius: 0, tension: 0 },
-      { label: "Aggregate supply", data: sup, borderColor: "#b5382f",
-        borderWidth: 2, borderDash: [7, 4], stepped: true, pointRadius: 0, tension: 0 }
-    ];
-    const y = sharedPriceRange();
-    if (!aggChart) {
-      aggChart = new Chart($("chart-agg"), {
-        type: "line",
-        data: { datasets },
-        options: {
-          responsive: true, maintainAspectRatio: false, animation: false,
-          interaction: { mode: "nearest", intersect: false },
-          scales: {
-            x: { type: "linear", min: 1, max: Math.max(n, 2),
-                 title: { display: true, text: "Units (aggregate quantity)" } },
-            y: { title: { display: true, text: "Price ($)" }, min: y.min, max: y.max }
-          },
-          plugins: {
-            legend: { position: "bottom" },
-            tooltip: { callbacks: {
-              title: it => "Unit " + it[0].parsed.x,
-              label: c => c.dataset.label + ": $" + c.parsed.y.toFixed(2)
-            } }
-          }
-        },
-        plugins: [eqLinePlugin, qStarRulePlugin("aggQStar")]
-      });
-    } else {
-      aggChart.data.datasets = datasets;
-      aggChart.options.scales.x.max = Math.max(n, 2);
-      aggChart.options.scales.y.min = y.min;
-      aggChart.options.scales.y.max = y.max;
-      aggChart.update("none");
-    }
-  }
-
-  function renderSeqChart() {
-    // Trades arrive in push order, which is chronological, so the index
-    // within a round IS the sequence number of that transaction.
-    const byRound = new Map();
-    for (const t of trades) {
-      if (!byRound.has(t.round)) byRound.set(t.round, []);
-      const arr = byRound.get(t.round);
-      arr.push({ x: arr.length + 1, y: t.price / 100 });
-    }
-    const rounds = [...byRound.keys()].sort((a, b) => a - b);
-    const datasets = rounds.map(rd => {
-      const col = ROUND_COLORS[(rd - 1) % ROUND_COLORS.length];
-      return {
-        label: "Round " + rd, data: byRound.get(rd),
-        borderColor: col, backgroundColor: col,
-        borderWidth: 1.5, pointRadius: 3, showLine: true, tension: 0
-      };
-    });
-    let maxTrades = 0;
-    for (const arr of byRound.values()) maxTrades = Math.max(maxTrades, arr.length);
-    const eq = market && market.params
-      ? WX.equilibrium(market.params, market.players) : null;
-    // Keep Q* on screen even when the market under-trades, otherwise the
-    // most informative case (trading stopped short) hides the rule.
-    const xMax = Math.max(maxTrades, eq && eq.exact ? eq.qTotal : 0, 2) + 1;
-    const y = sharedPriceRange();
-    if (!seqChart) {
-      seqChart = new Chart($("chart-seq"), {
-        type: "line",
-        data: { datasets },
-        options: {
-          responsive: true, maintainAspectRatio: false, animation: false,
-          interaction: { mode: "nearest", intersect: false },
-          scales: {
-            x: { type: "linear", min: 0, max: xMax, ticks: { precision: 0 },
-                 title: { display: true, text: "Transaction number within round" } },
-            y: { title: { display: true, text: "Price ($)" }, min: y.min, max: y.max }
-          },
-          plugins: {
-            legend: { position: "bottom" },
-            tooltip: { callbacks: {
-              title: it => "Trade " + it[0].parsed.x,
-              label: c => c.dataset.label + ": $" + c.parsed.y.toFixed(2)
-            } }
-          }
-        },
-        plugins: [eqLinePlugin, qStarRulePlugin("seqQStar")]
-      });
-    } else {
-      seqChart.data.datasets = datasets;
-      seqChart.options.scales.x.max = xMax;
-      seqChart.options.scales.y.min = y.min;
-      seqChart.options.scales.y.max = y.max;
-      seqChart.update("none");
-    }
-  }
 
   function renderChart() {
     // Average price of each trader's k-th trade within a round. Every trade
@@ -1018,10 +726,10 @@
     };
   }
   const pStarLine = vLinePlugin("pStarLine",
-    () => market && market.params ? WX.equilibrium(market.params, market.players).price / 100 : null,
+    () => market && market.params ? WX.equilibrium(market.params).price / 100 : null,
     v => "p* = $" + v.toFixed(2));
   const qStarLine = vLinePlugin("qStarLine",
-    () => market && market.params ? WX.equilibrium(market.params, market.players).qtyPerPair : null,
+    () => market && market.params ? WX.equilibrium(market.params).qtyPerPair : null,
     v => "q* \u2248 " + v.toFixed(1));
 
   function histDataset(rd, data) {
@@ -1037,7 +745,7 @@
   let lastBinW = 50;                            // cents; for tooltip bin ranges
   function renderHistograms() {
     const rounds = [...new Set(trades.map(t => t.round))].sort((a, b) => a - b);
-    const eq = market && market.params ? WX.equilibrium(market.params, market.players) : null;
+    const eq = market && market.params ? WX.equilibrium(market.params) : null;
 
     // ----- prices: shared bins across rounds so the colors line up
     let pMin = Infinity, pMax = -Infinity;
@@ -1156,19 +864,11 @@
   });
 
   $("btn-csv-standings").addEventListener("click", () => {
-    const rows = [["trader", "role", "draw_u", "intercept_shift", "own_intercept",
-      "own_slope", "widgets_current_round", "total_score"]];
+    const rows = [["trader", "role", "widgets_current_round", "total_score"]];
     const players = market && market.players ? Object.entries(market.players) : [];
-    const prm = (market && market.params) || {};
     players.sort((x, y) => y[1].score - x[1].score);
     for (const [name, p] of players) {
-      const isBuyer = p.role === "buyer";
-      const shift = isBuyer ? WX.shiftA(prm, p.u) : WX.shiftC(prm, p.u);
-      const intercept = (isBuyer ? prm.a : prm.c) + shift;
-      const slope = isBuyer ? prm.b : prm.d;
-      rows.push([name, p.role, p.u == null ? "" : Number(p.u).toFixed(6),
-        (shift / 100).toFixed(2), (intercept / 100).toFixed(2),
-        (slope / 100).toFixed(2), p.q, (p.score / 100).toFixed(2)]);
+      rows.push([name, p.role, p.q, (p.score / 100).toFixed(2)]);
     }
     WX.downloadText("widget-exchange-" + room + "-standings.csv", WX.toCSV(rows));
   });
@@ -1199,18 +899,12 @@
     const a = parseFloat($("p-a").value), b = parseFloat($("p-b").value);
     const c = parseFloat($("p-c").value), d = parseFloat($("p-d").value);
     const m = parseFloat($("p-m").value), t = parseInt($("p-t").value, 10);
-    const aLo = parseFloat($("p-alo").value), aHi = parseFloat($("p-ahi").value);
-    const cLo = parseFloat($("p-clo").value), cHi = parseFloat($("p-chi").value);
     const ok = [a, b, c, d, m].every(x => isFinite(x) && x >= 0) &&
-      [aLo, aHi, cLo, cHi].every(x => isFinite(x)) &&
-      aHi >= aLo && cHi >= cLo &&
-      b > 0 && d > 0 && (a + aHi) > (c + cLo) && t >= 1;
-    const v = ok ? { a, b, c, d, minutes: m, rounds: t, aLo, aHi, cLo, cHi } : DEFAULTS;
+      b > 0 && d > 0 && a > c && t >= 1;
+    const v = ok ? { a, b, c, d, minutes: m, rounds: t } : DEFAULTS;
     // Keep the inputs consistent with what the fresh game will actually use.
     $("p-a").value = v.a; $("p-b").value = v.b; $("p-c").value = v.c;
     $("p-d").value = v.d; $("p-m").value = v.minutes; $("p-t").value = v.rounds;
-    $("p-alo").value = v.aLo; $("p-ahi").value = v.aHi;
-    $("p-clo").value = v.cLo; $("p-chi").value = v.cHi;
     return v;
   }
   $("btn-nuke").addEventListener("click", () => {
@@ -1225,11 +919,7 @@
       },
       market: {
         open: false,
-        params: {
-          a: WX.toCents(v.a), b: WX.toCents(v.b), c: WX.toCents(v.c), d: WX.toCents(v.d),
-          aLo: WX.toCents(v.aLo), aHi: WX.toCents(v.aHi),
-          cLo: WX.toCents(v.cLo), cHi: WX.toCents(v.cHi)
-        },
+        params: { a: WX.toCents(v.a), b: WX.toCents(v.b), c: WX.toCents(v.c), d: WX.toCents(v.d) },
         players: {}, orders: {}
       }
     })).then(() => toast("Room wiped \u2014 fresh simulation ready."))

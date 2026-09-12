@@ -1,11 +1,9 @@
 # Widget Exchange — Setup Guide
 
 A live double-auction market game for principles of economics. Students are
-buyers (marginal utility `MU = (a + αᵢ) − b·Q`) or sellers (marginal cost
-`MC = (c + γⱼ) + d·Q`), trade one widget at a time in a shared order book, and
-accumulate surplus as their score. Each trader draws their own intercept
-shift from a uniform distribution whose bounds you set, so no two buyers
-have the same schedule. You run rounds, apply demand/supply
+buyers (marginal utility `MU = a − b·Q`) or sellers (marginal cost
+`MC = c + d·Q`), trade one widget at a time in a shared order book, and
+accumulate surplus as their score. You run rounds, apply demand/supply
 shocks, watch prices converge on a live chart, and export everything to CSV.
 
 **Files**
@@ -137,27 +135,9 @@ it after every refresh.
 ## Running it in class
 
 1. **Before lecture:** open `teacher.html`, open your room, and set
-   parameters. Defaults are `a=12, b=1, c=2, d=1` with intercept shifts
-   drawn from U[−$1.50, +$1.50] on both sides, 5-minute rounds, 3 rounds
-   — equilibrium near **p\* = $7**, about **5 trades per student** per
-   round. The console shows p\*, its band, Q\*, and maximum surplus live,
-   recomputed from the actual roster; students never see any of it.
-
-   **Trader heterogeneity.** The four α/γ bound fields control the spread.
-   Set all four to 0 and every buyer is identical, which makes the aggregate
-   schedules coarse staircases: with 12 buyers, 12 marginal units tie at
-   once, and the equilibrium becomes indeterminate over a 12-unit range of
-   quantity (or a whole price step, depending on where the curves cross).
-   Any nonzero spread fixes this — even ±$0.25 collapses the tie almost
-   always, and the console shows you the residual band so you can tell.
-   Bounds need not be symmetric; an asymmetric range shifts mean demand or
-   supply as well as spreading it.
-
-   Each student’s draw is fixed when they join and persists across rounds
-   and resets, so round-to-round convergence is measured against a stable
-   population. **Redraw trader types** (market closed) re-rolls everyone.
-   Widening the bounds mid-game stretches the population without reshuffling
-   it — the student who drew the highest intercept still has the highest.
+   parameters. Defaults are `a=12, b=1, c=2, d=1`, 5-minute rounds, 3
+   rounds — equilibrium at **p\* = $7**, about **5 trades per student** per
+   round. The console shows p\* and q\* live; students never see them.
 2. **Announce:** the student URL (or a QR code of
    `.../index.html?room=YOURCODE`, which pre-fills the code) and the room
    code. Vulgar usernames are rejected automatically; you can remove anyone
@@ -185,16 +165,8 @@ it after every refresh.
 ### Suggested debrief plot
 The trades CSV opens directly in Excel/Sheets. Plot `price` against trade
 number, add a horizontal line at p\*, and compare realized total surplus
-(sum of `total_surplus`) with the maximum shown in the console’s
-**Max surplus** KPI — that figure is computed by matching the highest-value
-unit to the lowest-cost unit down to Q\*, so the ratio is allocative
-efficiency in the Smith (1962) sense.
-
-The standings CSV now carries each trader’s `draw_u`, `intercept_shift`,
-`own_intercept`, and `own_slope`, so you can join it to the trades CSV and
-ask whether high-intercept buyers actually captured more surplus — a good
-regression exercise, and a direct test of whether the market rationed
-efficiently or just rewarded fast typists.
+(sum of `total_surplus`) with the theoretical maximum
+`N_pairs × Σ [MU(q) − MC(q)]` for q = 1…q\*.
 
 ---
 

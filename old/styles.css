@@ -236,7 +236,3 @@ tr.flash { animation: rowflash 1.2s ease-out; }
 footer.credit {
   text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20px 0 30px;
 }
-
-/* ---------- headline chart pair (aggregate S&D + price sequence) ---------- */
-.chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 960px) { .chart-pair { grid-template-columns: 1fr; } }

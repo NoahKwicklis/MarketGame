@@ -24,140 +24,20 @@
   "use strict";
 
   // ---------- economics ----------
-  // Every trader draws u ~ Uniform[0,1) once, when they join, and that draw
-  // is stored on their player record. It maps onto an intercept shift inside
-  // instructor-set bounds:
-  //   buyer  i: MU_i(q) = (a + aShift_i) - b*q,  aShift_i = aLo + u*(aHi - aLo)
-  //   seller j: MC_j(q) = (c + cShift_j) + d*q,  cShift_j = cLo + u*(cHi - cLo)
-  // Storing the draw rather than the shift means widening or narrowing the
-  // bounds mid-game stretches the population without reshuffling who is the
-  // high-value buyer — a clean comparative static rather than a new draw.
-  // Bounds default to zero, so a game with no bounds set behaves exactly as
-  // the homogeneous version did.
-  function shiftA(params, u) {
-    if (u == null || !isFinite(u)) return 0;
-    const lo = params.aLo || 0;
-    const hi = params.aHi == null ? lo : params.aHi;
-    return Math.round(lo + u * (hi - lo));
-  }
-  function shiftC(params, u) {
-    if (u == null || !isFinite(u)) return 0;
-    const lo = params.cLo || 0;
-    const hi = params.cHi == null ? lo : params.cHi;
-    return Math.round(lo + u * (hi - lo));
-  }
+  // Marginal utility of a buyer's NEXT unit, having bought q already:
+  //   MU(q+1) = a - b*(q+1)
+  // Marginal cost of a seller's NEXT unit, having sold q already:
+  //   MC(q+1) = c + d*(q+1)
+  // (Follows U(Q) = a - b*Q with Q = number bought, per game spec.)
+  function muNext(params, q) { return params.a - params.b * (q + 1); }
+  function mcNext(params, q) { return params.c + params.d * (q + 1); }
 
-  // Marginal utility of a buyer's NEXT unit, having bought q already.
-  function muNext(params, q, u) {
-    return params.a + shiftA(params, u) - params.b * (q + 1);
-  }
-  // Marginal cost of a seller's NEXT unit, having sold q already.
-  function mcNext(params, q, u) {
-    return params.c + shiftC(params, u) + params.d * (q + 1);
-  }
-
-  const MAX_UNITS = 60;          // safety cap on units enumerated per trader
-
-  // Representative-agent closed form: p* = (a*d + b*c)/(b + d). Only correct
-  // when the two sides are equal-sized and identical, so it is used purely as
-  // a lobby placeholder before anyone has joined.
-  function closedForm(params) {
+  // Competitive equilibrium with equal-sized, identical sides:
+  //   p* = (a*d + b*c) / (b + d),  q* per pair = (a - p*) / b
+  function equilibrium(params) {
     const p = (params.a * params.d + params.b * params.c) / (params.b + params.d);
     const q = (params.a - p) / params.b;
-    return {
-      exact: false, price: p, pLo: p, pHi: p, band: 0,
-      qTotal: 0, qMin: 0, qTied: 0, qPerBuyer: q, qPerSeller: q, qtyPerPair: q,
-      maxSurplus: 0, nBuyers: 0, nSellers: 0
-    };
-  }
-
-  // Build the aggregate demand and supply step functions by horizontal
-  // summation: pool every unit every buyer wants and every unit every seller
-  // could make, then sort. The k-th entry of `values` is the price at which
-  // the k-th unit of aggregate demand transacts; likewise for `costs`.
-  // Exported so the instructor console can plot the very curves the solver
-  // reads its answer off.
-  function schedules(params, players) {
-    const roster = players ? Object.values(players) : [];
-    const buyers = roster.filter(p => p && p.role === "buyer");
-    const sellers = roster.filter(p => p && p.role !== "buyer");
-
-    const values = [];
-    for (const p of buyers) {
-      for (let k = 0; k < MAX_UNITS; k++) {
-        const v = muNext(params, k, p.u);
-        if (v <= 0) break;                                 // free disposal
-        values.push(v);
-      }
-    }
-    values.sort((x, y) => y - x);
-    const vMax = values.length ? values[0] : 0;
-
-    const costs = [];
-    for (const p of sellers) {
-      for (let k = 0; k < MAX_UNITS; k++) {
-        const c = mcNext(params, k, p.u);
-        if (c > vMax) break;                               // never worth making
-        costs.push(c);
-      }
-    }
-    costs.sort((x, y) => x - y);
-    return { values: values, costs: costs, nBuyers: buyers.length, nSellers: sellers.length };
-  }
-
-  // Discrete competitive equilibrium for the actual roster in the room.
-  // Reads the crossing off the horizontally summed step functions, so it
-  // handles unequal sides, heterogeneous intercepts, and the integer nature
-  // of widgets, none of which the closed form can.
-  function equilibrium(params, players) {
-    const sch = schedules(params, players);
-    const values = sch.values, costs = sch.costs;
-    if (!sch.nBuyers || !sch.nSellers) return closedForm(params);
-
-    // Q* is the largest number of units for which the Q-th most eager unit of
-    // demand still values a widget at least as much as the Q-th cheapest unit
-    // of supply costs. Walking the two sorted lists in step is the discrete
-    // reading of where the curves cross.
-    let Q = 0;
-    while (Q < values.length && Q < costs.length && values[Q] >= costs[Q]) Q++;
-
-    // Units where value exactly equals cost add nothing to surplus, so whether
-    // they trade is arbitrary: Q* is really the range [qMin, Q]. With 12
-    // identical buyers and 12 identical sellers every marginal unit ties at
-    // once and that range is 12 units wide. Heterogeneous draws collapse it.
-    let qMin = 0;
-    while (qMin < values.length && qMin < costs.length && values[qMin] > costs[qMin]) qMin++;
-
-    // Any clearing price must be acceptable to the marginal traders who DO
-    // trade and unacceptable to the first ones who don't. That gives a band,
-    // not a point. With identical traders the band is a whole step wide
-    // (every marginal unit tied); random intercepts shrink it to a cent or
-    // two, which is the point of the draws.
-    const marginalCost  = Q > 0 ? costs[Q - 1] : -Infinity;
-    const marginalValue = Q > 0 ? values[Q - 1] : Infinity;
-    const nextValue = Q < values.length ? values[Q] : -Infinity;
-    const nextCost  = Q < costs.length ? costs[Q] : Infinity;
-    let pLo = Math.max(marginalCost, nextValue);
-    let pHi = Math.min(marginalValue, nextCost);
-    if (!isFinite(pLo) && !isFinite(pHi)) { pLo = pHi = closedForm(params).price; }
-    else if (!isFinite(pLo)) pLo = pHi;
-    else if (!isFinite(pHi)) pHi = pLo;
-    if (pHi < pLo) { const mid = (pLo + pHi) / 2; pLo = pHi = mid; }
-
-    let maxSurplus = 0;
-    for (let i = 0; i < Q; i++) maxSurplus += values[i] - costs[i];
-
-    const n = sch.nBuyers + sch.nSellers;
-    return {
-      exact: true,
-      price: (pLo + pHi) / 2, pLo: pLo, pHi: pHi, band: pHi - pLo,
-      qTotal: Q, qMin: qMin, qTied: Q - qMin,
-      qPerBuyer: Q / sch.nBuyers,
-      qPerSeller: Q / sch.nSellers,
-      qtyPerPair: n ? (2 * Q) / n : 0,       // mean units per trader
-      maxSurplus: maxSurplus,
-      nBuyers: sch.nBuyers, nSellers: sch.nSellers
-    };
+    return { price: p, qtyPerPair: q };
   }
 
   // ---------- money helpers ----------
@@ -308,8 +188,8 @@
       const seller = market.players[sellerName];
       const p = market.params;
 
-      const bMU = muNext(p, buyer.q, buyer.u);
-      const sMC = mcNext(p, seller.q, seller.u);
+      const bMU = muNext(p, buyer.q);
+      const sMC = mcNext(p, seller.q);
       buyer.q += 1; buyer.score += (bMU - tradePrice);
       seller.q += 1; seller.score += (tradePrice - sMC);
 
@@ -379,7 +259,6 @@
         }
         m.players[name] = {
           role: buyers <= sellers ? "buyer" : "seller",
-          u: Math.random(),                    // their intercept draw, fixed for the game
           q: 0, score: 0, joinedAt: serverNow()
         };
         return m;
@@ -388,17 +267,6 @@
         if (!p) throw new Error("Could not join \u2014 please try again.");
         return p;
       });
-    });
-  }
-
-  // Re-roll every trader's intercept draw (instructor only, market closed).
-  // Use between class sections, or to run the same students against a second
-  // independent draw from the same distribution.
-  function redrawTypes(room) {
-    return gameRef(room, "market").transaction(m => {
-      if (!m || m.open) return m;
-      if (m.players) for (const p of Object.values(m.players)) p.u = Math.random();
-      return m;
     });
   }
 
@@ -420,8 +288,7 @@
   }
 
   global.WX = {
-    muNext, mcNext, shiftA, shiftC, schedules, equilibrium, closedForm, redrawTypes,
-    toCents, fmt,
+    muNext, mcNext, equilibrium, toCents, fmt,
     nameProblem, cleanRoom, randomRoom, ROOM_RE,
     initFirebase, serverNow, gameRef,
     submitOrder, cancelOrder, joinGame, placeOrderInMarket,

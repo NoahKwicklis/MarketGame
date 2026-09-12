@@ -105,6 +105,24 @@
             <button id="btn-pause" class="btn ghost small" style="flex:1">Pause</button>
             <button id="btn-end" class="btn ghost small" style="flex:1">End round</button>
           </div>
+
+          <div class="param-grid" style="margin-top:12px">
+            <div><label for="p-m">Round length (minutes)</label>
+              <input id="p-m" type="number" step="0.5" min="0.25" max="180"></div>
+            <div><label for="p-t">Number of rounds</label>
+              <input id="p-t" type="number" step="1" min="1"></div>
+          </div>
+          <button id="btn-timing" class="btn ghost">Apply timing</button>
+
+          <p class="muted" style="font-size:0.82rem;margin:12px 0 4px">
+            Length applies from the next round you start. To change the round
+            that&#8217;s already running, use the clock adjusters:
+          </p>
+          <div class="btn-row">
+            <button id="btn-t-sub" class="btn ghost small" style="flex:1">&minus;1 min</button>
+            <button id="btn-t-add" class="btn ghost small" style="flex:1">+1 min</button>
+            <button id="btn-t-reset" class="btn ghost small" style="flex:1">Reset clock</button>
+          </div>
           <div id="ctl-err" class="err" role="alert"></div>
         </div>
 
@@ -124,10 +142,6 @@
               <input id="p-c" type="number" step="0.01" min="0"></div>
             <div><label for="p-d">d — cost slope ($/unit)</label>
               <input id="p-d" type="number" step="0.01" min="0.01"></div>
-            <div><label for="p-m">M — minutes per round</label>
-              <input id="p-m" type="number" step="0.5" min="0.5"></div>
-            <div><label for="p-t">T — number of rounds</label>
-              <input id="p-t" type="number" step="1" min="1"></div>
           </div>
           <p class="muted" style="font-size:0.84rem;margin:12px 0 0">
             <strong>Trader heterogeneity.</strong> Each buyer draws
@@ -493,11 +507,10 @@
     const note = $("param-note"); note.textContent = "";
     const a = parseFloat($("p-a").value), b = parseFloat($("p-b").value);
     const c = parseFloat($("p-c").value), d = parseFloat($("p-d").value);
-    const m = parseFloat($("p-m").value), t = parseInt($("p-t").value, 10);
     const aLo = parseFloat($("p-alo").value), aHi = parseFloat($("p-ahi").value);
     const cLo = parseFloat($("p-clo").value), cHi = parseFloat($("p-chi").value);
-    if ([a, b, c, d, m].some(x => !isFinite(x) || x < 0) || b <= 0 || d <= 0 || !t || t < 1) {
-      note.classList.remove("ok"); note.textContent = "Check the numbers: b, d, M, T must be positive."; return;
+    if ([a, b, c, d].some(x => !isFinite(x) || x < 0) || b <= 0 || d <= 0) {
+      note.classList.remove("ok"); note.textContent = "Check the numbers: a and c must be \u2265 0, b and d must be positive."; return;
     }
     if ([aLo, aHi, cLo, cHi].some(x => !isFinite(x))) {
       note.classList.remove("ok"); note.textContent = "Intercept bounds must be numbers (use 0 for no heterogeneity)."; return;
@@ -519,10 +532,7 @@
       aLo: WX.toCents(aLo), aHi: WX.toCents(aHi),
       cLo: WX.toCents(cLo), cHi: WX.toCents(cHi)
     };
-    Promise.all([
-      WX.gameRef(room, "market/params").set(params),
-      WX.gameRef(room, "meta").update({ roundSeconds: Math.round(m * 60), totalRounds: t })
-    ]).then(() => {
+    WX.gameRef(room, "market/params").set(params).then(() => {
       note.classList.add("ok");
       const eq = WX.equilibrium(params, market ? market.players : null);
       note.textContent = eq.exact
@@ -531,6 +541,84 @@
           "), q* = " + eq.qTotal + " units across " + (eq.nBuyers + eq.nSellers) + " traders."
         : "Applied. No traders yet \u2014 p* will be computed from the roster as students join.";
     });
+  });
+
+  // ---------- round timing ----------
+  // Length and count live here rather than with the market parameters: they
+  // govern the schedule of the session, not the structure of the market, and
+  // you change them at different moments for different reasons.
+  const MIN_MINUTES = 0.25, MAX_MINUTES = 180;
+
+  $("btn-timing").addEventListener("click", () => {
+    const errEl = $("ctl-err"); errEl.textContent = ""; errEl.classList.remove("ok");
+    if (!meta) return;
+    const m = parseFloat($("p-m").value), t = parseInt($("p-t").value, 10);
+    if (!isFinite(m) || m < MIN_MINUTES || m > MAX_MINUTES) {
+      errEl.textContent = "Round length must be between " + MIN_MINUTES + " and " + MAX_MINUTES + " minutes."; return;
+    }
+    if (!t || t < 1) { errEl.textContent = "Number of rounds must be at least 1."; return; }
+    const played = meta.round || 0;
+    if (t < played) {
+      errEl.textContent = "You have already played " + played + " rounds \u2014 set the count to " + played + " or more."; return;
+    }
+    WX.gameRef(room, "meta").update({
+      roundSeconds: Math.round(m * 60), totalRounds: t
+    }).then(() => {
+      const live = meta.phase === "running" || meta.phase === "paused";
+      toast(live
+        ? "Saved \u2014 applies from round " + (played + 1) + ". Use the adjusters for the live round."
+        : "Round length set to " + fmtMins(m) + ", " + t + " round" + (t === 1 ? "" : "s") + ".");
+    });
+  });
+
+  function fmtMins(m) {
+    const s = Math.round(m * 60);
+    return s % 60 === 0 ? (s / 60) + " min" : Math.floor(s / 60) + "m " + (s % 60) + "s";
+  }
+
+  // Stretch or shrink the round that is already running. While running we move
+  // the end timestamp; while paused the clock is frozen and the remaining time
+  // lives in pauseRemainingMs, so that is what gets adjusted instead.
+  function adjustClock(deltaMs) {
+    const errEl = $("ctl-err"); errEl.textContent = ""; errEl.classList.remove("ok");
+    if (!meta) return;
+    const FLOOR = 5000;              // never shrink to an instant auto-end
+    if (meta.phase === "running") {
+      const target = (meta.roundEndsAt || 0) + deltaMs;
+      const ends = Math.max(WX.serverNow() + FLOOR, target);
+      WX.gameRef(room, "meta").update({ roundEndsAt: ends }).then(() => {
+        const left = Math.round((ends - WX.serverNow()) / 1000);
+        toast("Clock now " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0") + " remaining.");
+      });
+    } else if (meta.phase === "paused") {
+      const rem = Math.max(FLOOR, (meta.pauseRemainingMs || 0) + deltaMs);
+      WX.gameRef(room, "meta").update({ pauseRemainingMs: rem }).then(() => {
+        const left = Math.round(rem / 1000);
+        toast("Paused with " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0") + " to resume.");
+      });
+    } else {
+      errEl.textContent = "No round is running \u2014 the adjusters only affect a live clock.";
+    }
+  }
+
+  $("btn-t-add").addEventListener("click", () => adjustClock(60000));
+  $("btn-t-sub").addEventListener("click", () => adjustClock(-60000));
+
+  // Put the live round back to its full configured length, for when a round
+  // has to be restarted in spirit without losing the trades already made.
+  $("btn-t-reset").addEventListener("click", () => {
+    const errEl = $("ctl-err"); errEl.textContent = ""; errEl.classList.remove("ok");
+    if (!meta) return;
+    const full = (meta.roundSeconds || 300) * 1000;
+    if (meta.phase === "running") {
+      WX.gameRef(room, "meta").update({ roundEndsAt: WX.serverNow() + full })
+        .then(() => toast("Clock reset to " + fmtMins(full / 60000) + "."));
+    } else if (meta.phase === "paused") {
+      WX.gameRef(room, "meta").update({ pauseRemainingMs: full })
+        .then(() => toast("Clock reset to " + fmtMins(full / 60000) + "."));
+    } else {
+      errEl.textContent = "No round is running \u2014 the adjusters only affect a live clock.";
+    }
   });
 
   // ---------- redraw trader types ----------
@@ -670,6 +758,12 @@
     $("btn-pause").textContent = meta.phase === "paused" ? "Resume" : "Pause";
     $("btn-pause").disabled = meta.phase !== "running" && meta.phase !== "paused";
     $("btn-end").disabled = meta.phase !== "running" && meta.phase !== "paused";
+    // The adjusters move a clock that is actually ticking (or frozen mid-round);
+    // between rounds there is nothing to stretch.
+    const live = meta.phase === "running" || meta.phase === "paused";
+    $("btn-t-add").disabled = !live;
+    $("btn-t-sub").disabled = !live;
+    $("btn-t-reset").disabled = !live;
     renderKPIs();
   }
 

@@ -165,6 +165,16 @@ it after every refresh.
 3. **Start the round.** The clock, order book, and ticker sync live on every
    device. Students post one order at a time and can revise or cancel it;
    crossing orders execute at the resting order's price.
+3b. **Round timing.** Round length and the number of rounds live in the
+   **Round controls** card, separate from the market parameters. **Apply
+   timing** saves both; a new length takes effect from the next round you
+   start, so a round already in progress is never yanked out from under the
+   students. To change the live round, use **−1 min** / **+1 min** or
+   **Reset clock**, which are enabled only while a round is running or
+   paused. Shrinking never leaves less than 5 seconds — use **End round**
+   if you want to stop immediately. Adjusting while paused changes the time
+   you'll resume with, not a clock that is ticking.
+
 4. **Mid-round shocks:** change `a` (demand shock) or `c` (supply shock) and
    click **Apply parameters** — every trade from that instant uses the new
    schedules, and the dashed p\* line on your chart jumps. Watch the market

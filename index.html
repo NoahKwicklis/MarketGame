@@ -57,7 +57,7 @@
             <span class="v" id="my-score">$0.00</span></div>
           <div class="stat-row"><span class="k" id="my-q-label">Widgets bought this round</span>
             <span class="v" id="my-q">0</span></div>
-          <div class="stat-row"><span class="k" id="my-mv-label">Marginal willingness to pay for next widget</span>
+          <div class="stat-row"><span class="k" id="my-mv-label">Marginal Value of Next Widget</span>
             <span class="v bignum" id="my-mv" style="font-size:1.45rem">—</span></div>
           <p class="muted" id="my-formula" style="font-size:0.82rem;margin:8px 0 0"></p>
           <div class="spark-wrap">
@@ -329,7 +329,7 @@
     const p = market.params;
     const mv = isBuyer ? WX.mwpNext(p, me.q, me.u) : WX.mcNext(p, me.q, me.u);
     $("my-mv-label").textContent = isBuyer
-      ? "Marginal willingness to pay for your next widget"
+      ? "Marginal Value of Next Widget"
       : "Marginal cost of your next widget";
     $("my-mv").textContent = WX.fmt(mv);
     $("my-mv").style.color = isBuyer ? "var(--bid)" : "var(--ask)";

@@ -240,3 +240,22 @@ footer.credit {
 /* ---------- headline chart pair (aggregate S&D + price sequence) ---------- */
 .chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 960px) { .chart-pair { grid-template-columns: 1fr; } }
+
+/* ---------- scrollable tables (student order book & trade log) ----------
+   A row is 0.95rem text at line-height 1.45 (~22px) plus 7px padding top and
+   bottom plus a 1px rule, so ~37px. Twelve of those is the cutoff; shorter
+   lists simply don't scroll, since max-height only bites once exceeded. */
+.tbl-scroll {
+  --row-h: 37px;
+  max-height: calc(var(--row-h) * 12);
+  overflow-y: auto;
+  overscroll-behavior: contain;   /* don't chain to the page at the ends */
+}
+.tbl-scroll thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel);
+  /* A sticky element's own border scrolls away in some engines; an inset
+     shadow paints reliably in the same place. */
+  border-bottom: none;
+  box-shadow: inset 0 -2px 0 var(--line);
+}

@@ -88,14 +88,18 @@
         <div class="book-cols">
           <div>
             <div class="book-head bid-c">Bids (buyers)</div>
-            <table aria-label="Bids"><thead><tr><th>Trader</th><th class="num">Price</th></tr></thead>
-              <tbody id="bids-body"></tbody></table>
+            <div class="tbl-scroll">
+              <table aria-label="Bids"><thead><tr><th>Trader</th><th class="num">Price</th></tr></thead>
+                <tbody id="bids-body"></tbody></table>
+            </div>
             <div id="bids-empty" class="empty-note">No bids yet.</div>
           </div>
           <div>
             <div class="book-head ask-c">Asks (sellers)</div>
-            <table aria-label="Asks"><thead><tr><th>Trader</th><th class="num">Price</th></tr></thead>
-              <tbody id="asks-body"></tbody></table>
+            <div class="tbl-scroll">
+              <table aria-label="Asks"><thead><tr><th>Trader</th><th class="num">Price</th></tr></thead>
+                <tbody id="asks-body"></tbody></table>
+            </div>
             <div id="asks-empty" class="empty-note">No asks yet.</div>
           </div>
         </div>
@@ -104,9 +108,11 @@
       <!-- Trades -->
       <div class="card">
         <h2>Completed trades</h2>
-        <table aria-label="Trades"><thead>
-          <tr><th>Rd</th><th>Buyer</th><th>Seller</th><th class="num">Price</th></tr>
-        </thead><tbody id="trades-body"></tbody></table>
+        <div class="tbl-scroll">
+          <table aria-label="Trades"><thead>
+            <tr><th>Rd</th><th>Buyer</th><th>Seller</th><th class="num">Price</th></tr>
+          </thead><tbody id="trades-body"></tbody></table>
+        </div>
         <div id="trades-empty" class="empty-note">Trades will appear here the moment they execute.</div>
       </div>
     </div>

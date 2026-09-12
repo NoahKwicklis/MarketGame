@@ -140,7 +140,7 @@ it after every refresh.
    parameters. Defaults are `a=12, b=1, c=2, d=1` with intercept shifts
    drawn from U[−$1.50, +$1.50] on both sides, 5-minute rounds, 3 rounds
    — equilibrium near **p\* = $7**, about **5 trades per student** per
-   round. The console shows p\*, its band, Q\*, and maximum surplus live,
+   round. The console shows p\*, its band, q\*, and maximum surplus live,
    recomputed from the actual roster; students never see any of it.
 
    **Trader heterogeneity.** The four α/γ bound fields control the spread.
@@ -187,7 +187,7 @@ The trades CSV opens directly in Excel/Sheets. Plot `price` against trade
 number, add a horizontal line at p\*, and compare realized total surplus
 (sum of `total_surplus`) with the maximum shown in the console’s
 **Max surplus** KPI — that figure is computed by matching the highest-value
-unit to the lowest-cost unit down to Q\*, so the ratio is allocative
+unit to the lowest-cost unit down to q\*, so the ratio is allocative
 efficiency in the Smith (1962) sense.
 
 The standings CSV now carries each trader’s `draw_u`, `intercept_shift`,

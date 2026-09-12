@@ -66,7 +66,7 @@
       <div class="kpi"><div class="k">Avg price (round)</div><div class="v" id="k-avg">—</div></div>
       <div class="kpi"><div class="k">Theoretical p*</div><div class="v" id="k-eqp">—</div></div>
       <div class="kpi"><div class="k">p* band</div><div class="v" id="k-eqband">—</div></div>
-      <div class="kpi"><div class="k">Q* total / per trader</div><div class="v" id="k-eqq">—</div></div>
+      <div class="kpi"><div class="k">q* total / per trader</div><div class="v" id="k-eqq">—</div></div>
       <div class="kpi"><div class="k">Max surplus (round)</div><div class="v" id="k-eqs">—</div></div>
     </div>
 
@@ -77,7 +77,10 @@
         <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
           Every buyer&#8217;s units pooled and sorted high-to-low, every seller&#8217;s
           pooled and sorted low-to-high &#8212; the horizontal sum of the individual
-          schedules. Where the staircases cross is p* and Q*.
+          schedules. Where the staircases cross is p* and q*. The shaded band is
+          the full range of market-clearing prices; the dashed line is its
+          midpoint. A thick band means marginal units are nearly tied &#8212; widen
+          the intercept bounds to sharpen it.
         </p>
       </div>
 
@@ -87,7 +90,7 @@
         <p class="muted" style="font-size:0.82rem;margin:8px 0 0">
           The n-th trade of each round at the price it executed, out to the last
           trade that round. Horizontal dashed line = p*; vertical dashed line =
-          predicted Q*, so trades falling to its right mean the market moved more
+          predicted q*, so trades falling to its right mean the market moved more
           units than theory says it should.
         </p>
       </div>
@@ -526,7 +529,7 @@
       note.textContent = eq.exact
         ? "Applied. p* = " + WX.fmt(Math.round(eq.price)) +
           " (band " + WX.fmt(Math.round(eq.pLo)) + "\u2013" + WX.fmt(Math.round(eq.pHi)) +
-          "), Q* = " + eq.qTotal + " units across " + (eq.nBuyers + eq.nSellers) + " traders."
+          "), q* = " + eq.qTotal + " units across " + (eq.nBuyers + eq.nSellers) + " traders."
         : "Applied. No traders yet \u2014 p* will be computed from the roster as students join.";
     });
   });
@@ -688,6 +691,34 @@
     }
   };
 
+  // The equilibrium price is an interval, not a point: any price the marginal
+  // traders accept and the first excluded traders reject clears the market.
+  // Shade it behind the curves so the dashed p* line reads as the midpoint of
+  // a range rather than a hard prediction.
+  const pBandPlugin = {
+    id: "pBand",
+    beforeDatasetsDraw(c) {
+      if (!market || !market.params) return;
+      const eq = WX.equilibrium(market.params, market.players);
+      if (!eq.exact) return;
+      const yA = c.scales.y.getPixelForValue(eq.pHi / 100);
+      const yB = c.scales.y.getPixelForValue(eq.pLo / 100);
+      if (!isFinite(yA) || !isFinite(yB)) return;
+      const { left, right, top, bottom } = c.chartArea;
+      let t = Math.max(top, Math.min(yA, yB));
+      let b = Math.min(bottom, Math.max(yA, yB));
+      if (b < top || t > bottom) return;
+      // A band a couple of cents wide is sub-pixel on a $10 axis. Give it a
+      // visible floor, but keep it thin so it never overstates its width.
+      if (b - t < 3) { const mid = (t + b) / 2; t = mid - 1.5; b = mid + 1.5; }
+      const ctx = c.ctx;
+      ctx.save();
+      ctx.fillStyle = "rgba(30, 78, 95, 0.16)";
+      ctx.fillRect(left, t, right - left, b - t);
+      ctx.restore();
+    }
+  };
+
   // Vertical dashed rule at the predicted quantity, labelled underneath the
   // line. The label sits just inside the plot floor rather than below the
   // axis, so it never collides with the tick labels or the axis title.
@@ -707,8 +738,8 @@
         ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
         ctx.setLineDash([]);
         const txt = eq.qTied > 0
-          ? "Q* = " + eq.qMin + "\u2013" + eq.qTotal
-          : "Q* = " + eq.qTotal;
+          ? "q* = " + eq.qMin + "\u2013" + eq.qTotal
+          : "q* = " + eq.qTotal;
         ctx.font = "600 11px 'IBM Plex Mono', monospace";
         const w = ctx.measureText(txt).width;
         const cx = Math.min(Math.max(x, left + w / 2 + 4), right - w / 2 - 4);
@@ -794,7 +825,7 @@
             } }
           }
         },
-        plugins: [eqLinePlugin, qStarRulePlugin("aggQStar")]
+        plugins: [pBandPlugin, eqLinePlugin, qStarRulePlugin("aggQStar")]
       });
     } else {
       aggChart.data.datasets = datasets;
@@ -827,7 +858,7 @@
     for (const arr of byRound.values()) maxTrades = Math.max(maxTrades, arr.length);
     const eq = market && market.params
       ? WX.equilibrium(market.params, market.players) : null;
-    // Keep Q* on screen even when the market under-trades, otherwise the
+    // Keep q* on screen even when the market under-trades, otherwise the
     // most informative case (trading stopped short) hides the rule.
     const xMax = Math.max(maxTrades, eq && eq.exact ? eq.qTotal : 0, 2) + 1;
     const y = sharedPriceRange();
